@@ -24,7 +24,6 @@ import {
 import type {
   DeleteSessionEntryLifecycleParams,
   DeleteSessionEntryLifecycleResult,
-  SessionLifecycleArchivedTranscript,
   SqliteSessionReclamationDiagnostics,
 } from "./session-accessor.sqlite-contract.js";
 import { runSqliteSessionDeletionTransaction } from "./session-accessor.sqlite-deletion.js";
@@ -43,7 +42,13 @@ import {
   deleteMaterializedSessionStatePlans,
   deletePlannedLifecycleArtifactEntries,
 } from "./session-accessor.sqlite-lifecycle-state.js";
-import type { SessionEntryRemovalPlan } from "./session-accessor.sqlite-lifecycle-types.js";
+import type {
+  ReclamationDatabaseOptions,
+  ReclamationDeleteParams,
+  SessionEntryRemovalPlan,
+  SqliteSessionReclamationPlan,
+  SqliteSessionReclamationResult,
+} from "./session-accessor.sqlite-lifecycle-types.js";
 import { deleteSessionDeliveryArtifacts } from "./session-accessor.sqlite-node-artifacts.js";
 import { withSqliteReclamationAuthorization } from "./session-accessor.sqlite-reclamation-commit.js";
 import { isRecentHistoricalSessionId } from "./session-accessor.sqlite-references.js";
@@ -60,65 +65,6 @@ type SessionBoardCleanupDatabase = Pick<
 > & {
   sqlite_schema: { name: string | null; type: string };
 };
-
-type ReclamationDatabaseOptions = OpenClawAgentDatabaseOptions & {
-  env: NodeJS.ProcessEnv;
-  path: string;
-};
-
-type ReclamationDeleteParams = Omit<DeleteSessionEntryLifecycleParams, "commitGuard">;
-
-type SessionReclamationPlanBase = {
-  databaseOptions: ReclamationDatabaseOptions;
-  materializedPlans: MaterializedSessionStateDeletePlan[];
-};
-
-export type SqliteSessionReclamationPlan =
-  | (SessionReclamationPlanBase & {
-      deleteParams: ReclamationDeleteParams;
-      kind: "entry";
-      preparedTargetSnapshot: SqliteLifecycleTargetSnapshot;
-    })
-  | (SessionReclamationPlanBase & {
-      agentId: string;
-      entries: SessionEntryRemovalPlan[];
-      kind: "lifecycle-artifacts";
-    })
-  | (SessionReclamationPlanBase & {
-      diskBudget: { preserveRecentMs?: number | null };
-      kind: "history-eviction";
-      protectedSessionIds: string[];
-      sessionId: string;
-    })
-  | (SessionReclamationPlanBase & {
-      deleteParams: ReclamationDeleteParams;
-      kind: "historical-generation";
-      preparedTargetSnapshot: SqliteLifecycleTargetSnapshot;
-      protectedSessionIds: string[];
-      sessionId: string;
-    });
-
-export type SqliteSessionReclamationResult =
-  | { kind: "entry"; value: DeleteSessionEntryLifecycleResult }
-  | {
-      kind: "lifecycle-artifacts";
-      value: {
-        archivedTranscripts: SessionLifecycleArchivedTranscript[];
-        removedEntries: number;
-      };
-    }
-  | {
-      kind: "history-eviction";
-      value: { archivedTranscripts: SessionLifecycleArchivedTranscript[]; deleted: boolean };
-    }
-  | {
-      kind: "historical-generation";
-      value: {
-        archivedTranscripts: SessionLifecycleArchivedTranscript[];
-        deleted: boolean;
-        expectedEntryMismatch?: true;
-      };
-    };
 
 export type SqliteSessionReclamationWorkerData = {
   commitGate?: SharedArrayBuffer;
