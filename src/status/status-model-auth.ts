@@ -101,6 +101,9 @@ export function createStatusModelAuthResolver(params: {
     if (evaluation.environmentVariable) {
       return `${mode ?? "unknown"} (env: ${evaluation.environmentVariable})`;
     }
+    if (evaluation.evidence === "environment") {
+      return `${mode ?? "unknown"} (environment)`;
+    }
     return evaluation.runtimeAuth
       ? (mode ?? "native") + " (" + evaluation.runtimeAuth.id + ")"
       : (mode ?? "unknown");

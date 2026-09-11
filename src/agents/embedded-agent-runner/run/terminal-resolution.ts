@@ -548,15 +548,6 @@ async function completeEmbeddedRun(
     log.debug(
       `embedded run done: runId=${input.runParams.runId} sessionId=${input.runParams.sessionId} durationMs=${Date.now() - input.startedAtMs} aborted=${terminalAborted}`,
     );
-    markEmbeddedRunAuthProfileSuccess({
-      authProfileStateMode: input.runParams.authProfileStateMode,
-      profileId: input.authProfileId,
-      profileStore: input.profileFailureStore,
-      provider: input.provider,
-      agentDir: input.runParams.agentDir,
-      runId: input.runParams.runId,
-      sessionId: input.runParams.sessionId,
-    });
     authSourceChangeNotice = reportEmbeddedRunSuccessfulAuthBinding({
       preparedModelRuntime: input.preparedModelRuntime,
       preparedModelId: input.modelId,
@@ -581,6 +572,17 @@ async function completeEmbeddedRun(
       pluginHarnessOwnsTransport: input.pluginHarnessOwnsTransport,
       pluginHarnessOwnsAuthBootstrap: input.pluginHarnessOwnsAuthBootstrap,
       onSuccessfulAuthBinding: input.runParams.onSuccessfulAuthBinding,
+    });
+    // Success bookkeeping can synchronously publish a new auth generation.
+    // Record the completed request while its captured generation still owns it.
+    markEmbeddedRunAuthProfileSuccess({
+      authProfileStateMode: input.runParams.authProfileStateMode,
+      profileId: input.authProfileId,
+      profileStore: input.profileFailureStore,
+      provider: input.provider,
+      agentDir: input.runParams.agentDir,
+      runId: input.runParams.runId,
+      sessionId: input.runParams.sessionId,
     });
     input.runParams.onSuccessfulAuthProfile?.(input.authProfileId);
   }

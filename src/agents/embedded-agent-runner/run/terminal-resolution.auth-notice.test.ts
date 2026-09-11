@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getReplyPayloadMetadata } from "../../../auto-reply/reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../../../auto-reply/tokens.js";
+import * as authProfiles from "../../auth-profiles.js";
 import * as runtimeAuth from "../../prepared-model-runtime-auth.js";
 import {
   buildEmbeddedRunnerAssistant,
@@ -46,6 +47,62 @@ function successfulInput(text = "The task is complete.") {
 
 describe("successful terminal account notice", () => {
   beforeEach(() => vi.restoreAllMocks());
+
+  it("records the first successful fallback before bookkeeping retires its generation", async () => {
+    const input = successfulInput();
+    let current = true;
+    const snapshot = { config: {}, isCurrent: () => current };
+    const owner = {};
+    input.preparedModelRuntime = snapshot;
+    runtimeAuth.prepareModelRuntimeAuthSources(owner, undefined, {
+      config: snapshot.config,
+      agentDir: "/tmp/terminal-auth-owner",
+    });
+    runtimeAuth.bindModelRuntimeAuthSources(owner, snapshot);
+    runtimeAuth.recordPreparedModelRuntimeAuthSource(snapshot, "openai", input.modelId, {
+      kind: "direct",
+      mode: "api-key",
+      readiness: "ready",
+      evidence: "environment",
+      authorization: "declared",
+      boundEnvVar: "OPENAI_API_KEY",
+    });
+    runtimeAuth.retainModelRuntimeAuthSourcesAfterMutation(owner);
+    const bookkeeping = vi
+      .spyOn(authProfiles, "markAuthProfileSuccess")
+      .mockImplementation(async () => {
+        current = false;
+      });
+
+    const result = await resolveEmbeddedRunTerminal(input);
+
+    expect(bookkeeping).toHaveBeenCalledOnce();
+    expect(snapshot.isCurrent()).toBe(false);
+    expect(result).toMatchObject({
+      action: "complete",
+      result: { payloads: [...input.payloadsWithToolMedia, { text: notice }] },
+    });
+    expect(
+      runtimeAuth.getPreparedModelRuntimePreferredAuthSource(snapshot, "openai", input.modelId),
+    ).toMatchObject({
+      kind: "profile",
+      profileId: "openai:new",
+    });
+    expect(
+      runtimeAuth.recordPreparedModelRuntimeAuthSource(snapshot, "openai", input.modelId, {
+        kind: "profile",
+        profileId: "openai:stale",
+        readiness: "ready",
+        cooldown: "clear",
+      }),
+    ).toBe(false);
+    expect(
+      runtimeAuth.getPreparedModelRuntimePreferredAuthSource(snapshot, "openai", input.modelId),
+    ).toMatchObject({
+      kind: "profile",
+      profileId: "openai:new",
+    });
+  });
 
   it("delivers the owner's one-time transition after the successful reply and retains media", async () => {
     const record = vi
