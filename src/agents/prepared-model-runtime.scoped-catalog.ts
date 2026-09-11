@@ -11,10 +11,8 @@ import type {
   PreparedModelRuntimeAgentFacts,
   PreparedModelRuntimeCatalogSource,
 } from "./prepared-model-runtime.catalog-contract.js";
-import {
-  captureModelsJsonContents,
-  prepareWorkspaceBuildGroup,
-} from "./prepared-model-runtime.facts.js";
+import { captureModelsJsonContents } from "./prepared-model-runtime.configured-catalog.js";
+import { prepareWorkspaceBuildGroup } from "./prepared-model-runtime.facts.js";
 import {
   materializePreparedModelCatalog,
   prepareFullCatalogFacts,

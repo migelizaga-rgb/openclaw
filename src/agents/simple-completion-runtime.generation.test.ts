@@ -222,7 +222,7 @@ it.each([false, true])(
       source: "local marker",
       mode: "api-key",
     });
-    const resolve = createOllamaModelResolver();
+    const resolve = createModelResolver();
     const preparing = parent.run(() =>
       acquireSimpleCompletionModel({
         cfg: { models: { providers: { ollama: { apiKey: "local-fixture" } } } },

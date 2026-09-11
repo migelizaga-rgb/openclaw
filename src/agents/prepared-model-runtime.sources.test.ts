@@ -12,7 +12,7 @@ import {
   replacePersistedPluginModelCatalogs,
 } from "./plugin-model-catalog.js";
 import type { PreparedModelRuntimeAgentFacts } from "./prepared-model-runtime.catalog-contract.js";
-import { prepareConfiguredRuntimeFactsBatch } from "./prepared-model-runtime.facts.js";
+import { prepareConfiguredRuntimeFactsBatch } from "./prepared-model-runtime.configured-catalog.js";
 import {
   createPreparedModelRuntimeSnapshot,
   prepareFullCatalogFacts,

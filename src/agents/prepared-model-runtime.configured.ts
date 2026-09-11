@@ -47,7 +47,6 @@ import type {
   PreparedRuntimeCapabilityModel,
   PreparedModelRuntimeInput,
 } from "./prepared-model-runtime.types.js";
-import type { AuthStorageData } from "./sessions/auth-storage.js";
 import { resolveEffectiveAgentRuntime } from "./thinking-runtime.js";
 
 /** Collects defaults, global refs, and only the selected agent's overrides. */
