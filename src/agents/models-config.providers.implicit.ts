@@ -7,7 +7,6 @@ import {
   findNormalizedProviderValue,
   normalizeProviderId,
 } from "@openclaw/model-catalog-core/provider-id";
-import { getConfigProviderUseBindings } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { ProviderCatalogOutcome } from "../plugins/provider-catalog.types.js";
@@ -27,7 +26,6 @@ import { resolveNonEnvSecretRefApiKeyMarker } from "../secrets/provider-credenti
 import { ensureAuthProfileStore } from "./auth-profiles/store-runtime.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { isNonSecretApiKeyMarker } from "./model-auth-markers.js";
-import { resolveStartupProviderUseBindingConflict } from "./model-auth-runtime-config.js";
 import { parseConfiguredModelVisibilityEntries } from "./model-selection-shared.js";
 import { mergeProviderModels, type SourceModelFields } from "./models-config.merge.js";
 import {
@@ -90,8 +88,6 @@ type ImplicitProviderContext = ImplicitProviderParams & {
   resolveProviderApiKey: ProviderApiKeyResolver;
   resolveProviderAuth: ProviderAuthResolver;
   providerAdmission: ReadonlyMap<string, ProviderUseBinding>;
-  liveProviderIds: Set<string>;
-  publicStaticProviders: Map<string, ProviderConfig>;
 };
 
 function resolveLiveProviderCatalogTimeoutMs(env: NodeJS.ProcessEnv): number | null {
@@ -311,31 +307,15 @@ async function resolvePluginImplicitProviders(
     // Static catalogs are preferred for entries-only discovery and as a fallback
     // when runtime discovery produces no usable provider config.
     const hasPreparedStaticResult = preparedStaticResults?.has(provider) === true;
-    let staticResult = useStaticCatalog;
     let result;
     if (useStaticCatalog) {
       result = hasPreparedStaticResult
         ? preparedStaticResults.get(provider)
         : await runProviderStaticCatalog({ provider });
     } else if (admittedProviderIds.length > 0) {
-      const currentProviderIds = admittedProviderIds.filter((providerId) => {
-        if (
-          !resolveStartupProviderUseBindingConflict({
-            ...ctx,
-            provider: providerId,
-            cfg: ctx.config,
-            store: ctx.authStore,
-          })
-        ) {
-          return true;
-        }
-        ctx.onProviderCatalogOutcome?.({ provider: providerId, status: "unavailable" });
-        return false;
-      });
-      currentProviderIds.forEach((id) => ctx.liveProviderIds.add(normalizeProviderId(id)));
       result = await runProviderCatalogWithTimeout({
         provider,
-        providerIds: currentProviderIds,
+        providerIds: admittedProviderIds,
         admission: ctx.providerAdmission,
         resolveProviderApiKey: resolveCatalogProviderApiKey,
         resolveProviderAuth: ctx.resolveProviderAuth,
@@ -349,7 +329,6 @@ async function resolvePluginImplicitProviders(
       });
     }
     if (!result && !useStaticCatalog && provider.staticCatalog) {
-      staticResult = true;
       result = await runProviderStaticCatalog({ provider });
     }
     if (!result) {
@@ -365,9 +344,6 @@ async function resolvePluginImplicitProviders(
         (selectedProviderIds && !selectedProviderIds.has(normalizeProviderId(providerId)))
       ) {
         continue;
-      }
-      if (staticResult) {
-        ctx.publicStaticProviders.set(providerId, implicitProvider);
       }
       const mergedProvider = mergeImplicitProviderConfig({
         providerId,
@@ -522,8 +498,6 @@ export async function resolveImplicitProviders(
     env,
     profiles: params.providerDiscoveryEntriesOnly ? undefined : getAuthStore().profiles,
   });
-  const provisionalOutcomes: ProviderCatalogOutcome[] = [];
-  const startupBindings = getConfigProviderUseBindings(params.config);
   const authInputs = [
     env,
     getAuthStore,
@@ -543,15 +517,6 @@ export async function resolveImplicitProviders(
     resolveProviderApiKey: createProviderApiKeyResolver(...authInputs),
     resolveProviderAuth: createProviderAuthResolver(...authInputs),
     providerAdmission,
-    liveProviderIds: new Set(),
-    publicStaticProviders: new Map(),
-    onProviderCatalogOutcome: (outcome) => {
-      if (Object.hasOwn(startupBindings, normalizeProviderId(outcome.provider))) {
-        provisionalOutcomes.push(outcome);
-      } else {
-        params.onProviderCatalogOutcome?.(outcome);
-      }
-    },
   };
   const preparedStaticEntries = params.preparedStaticProviderCatalog
     ? params.preparedStaticProviderCatalog.entries.filter(
@@ -667,34 +632,6 @@ export async function resolveImplicitProviders(
         preparedStaticResults,
       ),
     );
-  }
-  const revoked = new Set<string>();
-  for (const provider of context.liveProviderIds) {
-    if (
-      !resolveStartupProviderUseBindingConflict({
-        ...context,
-        provider,
-        cfg: params.config,
-        store: getAuthStore(),
-      })
-    ) {
-      continue;
-    }
-    revoked.add(provider);
-    const publicStatic = context.publicStaticProviders.get(provider);
-    if (publicStatic) {
-      providers[provider] = publicStatic;
-    } else {
-      delete providers[provider];
-    }
-  }
-  for (const outcome of provisionalOutcomes) {
-    if (!revoked.has(normalizeProviderId(outcome.provider))) {
-      params.onProviderCatalogOutcome?.(outcome);
-    }
-  }
-  for (const provider of revoked) {
-    params.onProviderCatalogOutcome?.({ provider, status: "unavailable" });
   }
   return providers;
 }

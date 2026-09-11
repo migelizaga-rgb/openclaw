@@ -58,6 +58,55 @@ describe("captured model decisions", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([true, false])(
+    "keeps retained account choices specific to each catalog model (runtime history=%s)",
+    async (hasRuntimeHistory) => {
+      const first = { provider: "fixture", id: "first", name: "First" };
+      const second = { provider: "fixture", id: "second", name: "Second" };
+      const cfg: OpenClawConfig = {
+        models: { providers: { fixture: { baseUrl: "https://fixture.invalid/v1", models: [] } } },
+      };
+      const owner = createModelCatalogDecisions({
+        cfg,
+        agentId: "main",
+        agentDir: "/tmp/catalog-agent",
+        workspaceDir: "/tmp/catalog-workspace",
+        snapshot: { entries: [first, second], routeVariants: [first, second] },
+        metadataSnapshot: createPluginMetadataSnapshotFixture({
+          plugins: [{ id: "fixture", providers: ["fixture"] }],
+        }),
+        preparedAuthStore: {
+          version: 1,
+          profiles: {
+            "fixture:first": { type: "api_key", provider: "fixture", key: "first-key" },
+            "fixture:second": { type: "api_key", provider: "fixture", key: "second-key" },
+          },
+        },
+        ...(hasRuntimeHistory
+          ? {
+              preferredAuthSource: (provider: string, modelId: string) => ({
+                kind: "profile" as const,
+                profileId: `${provider}:${modelId === "first" ? "second" : "first"}`,
+                mode: "api_key",
+                readiness: "ready" as const,
+                cooldown: "clear" as const,
+              }),
+            }
+          : {}),
+        preparedSyntheticAuthComplete: true,
+        isCurrent: () => true,
+      });
+      expect(await owner.evaluateEntry(first)).toMatchObject({
+        availability: true,
+        selectedProfileId: hasRuntimeHistory ? "fixture:second" : "fixture:first",
+      });
+      expect(await owner.evaluateEntry(second)).toMatchObject({
+        availability: true,
+        selectedProfileId: "fixture:first",
+      });
+    },
+  );
+
+  it.each([true, false])(
     "preserves provider auth for a non-CLI harness (authenticated=%s)",
     async (authenticated) => {
       const model = { provider: "github-copilot", id: "fixture-model", name: "Fixture model" };

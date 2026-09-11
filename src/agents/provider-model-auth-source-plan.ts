@@ -1,8 +1,5 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
-import {
-  getConfigProviderUseBindings,
-  resolveConfigProviderUseBindings,
-} from "../config/resolution-facts.js";
+import { resolveConfigProviderUseBindings } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ProviderBindingEnvVarCandidates } from "../secrets/provider-env-vars.js";
 import { isSetupCredentialAccessible } from "./auth-profiles/setup-access.js";
@@ -47,7 +44,7 @@ export function resolveProviderUseBindingCredentialPolicy(
   return { aliasMap, envCandidateMap, manifestVariables };
 }
 
-/** Startup and Doctor share the same conservative saved-account family boundary. */
+/** Doctor cannot replace a saved account with a generated global binding. */
 export function providerUseBindingConflictsWithAccount(
   providerId: string,
   storedProviderId: string,
@@ -66,30 +63,6 @@ export function providerUseBindingConflictsWithAccount(
       (name) => manifestVariables.has(name) && (envCandidateMap[provider] ?? []).includes(name),
     )
   );
-}
-
-export function findStartupProviderUseBindingConflict(params: {
-  provider: string;
-  config?: OpenClawConfig;
-  profiles: Iterable<readonly [string, Pick<AuthProfileCredential, "provider">]>;
-  providerEnvVars: ProviderBindingEnvVarCandidates;
-  providerAuthAliases: Readonly<Record<string, string>>;
-}): string | undefined {
-  const provider = normalizeProviderId(params.provider);
-  const binding = getConfigProviderUseBindings(params.config)[provider];
-  if (!binding) {
-    return undefined;
-  }
-  const policy = resolveProviderUseBindingCredentialPolicy(
-    params.providerEnvVars,
-    params.providerAuthAliases,
-  );
-  for (const [profileId, profile] of params.profiles) {
-    if (providerUseBindingConflictsWithAccount(provider, profile.provider, policy)) {
-      return profileId;
-    }
-  }
-  return undefined;
 }
 
 /** One declaring chat plugin may bind its own family, but never a competing plugin. */
@@ -307,6 +280,7 @@ export type ProviderModelAuthSourcePlan =
       orderedProfiles: readonly ProviderModelAuthProfileSource[];
       allowCooldown: boolean;
       fallback?: ProviderModelAuthDirectSource;
+      preferredDirectSource?: ProviderModelAuthDirectSource;
       /**
        * How many profiles the operator declared for this provider, before any
        * readiness, cooldown or route-compatibility filtering. Route filtering
@@ -375,6 +349,8 @@ export function buildProviderModelAuthSourcePlan(params: {
   preferredProfileId?: string;
   explicitOrder?: boolean;
   fallback?: ProviderModelAuthDirectSource;
+  /** Retains the current automatic credential without making it a required binding. */
+  preferredDirectSource?: ProviderModelAuthDirectSource;
   allowCooldown?: boolean;
   /** Overrides the declared count when rebuilding a plan from filtered profiles. */
   declaredProfileCount?: number;
@@ -415,5 +391,8 @@ export function buildProviderModelAuthSourcePlan(params: {
     allowCooldown: params.allowCooldown === true,
     declaredProfileCount: params.declaredProfileCount ?? ordered.length,
     ...(params.fallback ? { fallback: params.fallback } : {}),
+    ...(!explicitOrder && params.preferredDirectSource
+      ? { preferredDirectSource: params.preferredDirectSource }
+      : {}),
   };
 }

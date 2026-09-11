@@ -4,7 +4,10 @@ import type {
   PublishedModelCatalogOwnerCandidate,
   ResolvedPublishedModelCatalogOwner,
 } from "./prepared-model-catalog.types.js";
-import { getPreparedModelRuntimeAuthStore } from "./prepared-model-runtime-auth.js";
+import {
+  getPreparedModelRuntimeAuthStore,
+  getPreparedModelRuntimePreferredAuthSource,
+} from "./prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeInput } from "./prepared-model-runtime.types.js";
 
 class PublishedModelCatalogOwnerResolutionError extends Error {
@@ -55,6 +58,10 @@ export function resolvePublishedModelCatalogOwner(
     );
   }
   return Object.freeze({
+    preferredAuthSource:
+      snapshot.preferredAuthSource ??
+      ((provider: string, modelId: string) =>
+        getPreparedModelRuntimePreferredAuthSource(snapshot, provider, modelId)),
     catalogOwner,
     agentId,
     agentDir: snapshot.agentDir,

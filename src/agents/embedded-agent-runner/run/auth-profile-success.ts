@@ -1,5 +1,6 @@
 import { redactIdentifier } from "@openclaw/normalization-core/node-crypto";
 import { sanitizeForLog } from "../../../../packages/terminal-core/src/ansi.js";
+import { markReplyPayloadForSourceSuppressionDelivery } from "../../../auto-reply/reply-payload.js";
 import { MODEL_APIS, type ModelApi } from "../../../config/types.models.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
@@ -17,9 +18,15 @@ import {
   fingerprintResolvedProviderAuth,
   type AgentExecutionAuthBinding,
 } from "../../execution-auth-binding.js";
+import { AGENT_LANE_SUBAGENT } from "../../lanes.js";
 import type { ResolvedProviderAuth } from "../../model-auth.js";
+import { recordPreparedModelRuntimeAuthSource } from "../../prepared-model-runtime-auth.js";
+import type { ProviderModelAuthSource } from "../../provider-model-auth-source-plan.js";
 import { modelMatchesProviderModelRoute } from "../../provider-model-route.js";
+import type { AgentRuntimeAuthPlan } from "../../runtime-plan/types.js";
 import { log } from "../logger.js";
+import type { EmbeddedAgentRunResult } from "../types.js";
+import type { RunEmbeddedAgentInternalParams } from "./internal-params.js";
 import type { EmbeddedRunAttemptResult } from "./types.js";
 
 const POST_RUN_AUTH_PROFILE_SUCCESS_SLOW_MS = 1_000;
@@ -72,23 +79,46 @@ export function markEmbeddedRunAuthProfileSuccess(input: {
     });
 }
 
-export function reportEmbeddedRunSuccessfulAuthBinding(input: {
-  profileId?: string;
-  profileStore: AuthProfileStore;
-  apiKeyInfo: ResolvedProviderAuth | null;
-  attempt: EmbeddedRunAttemptResult;
-  provider: string;
-  agentDir?: string;
-  modelId: string;
-  modelApi: string;
-  modelBaseUrl?: string;
-  requestTransportOverrides?: ProviderRouteOverridePresence;
-  config?: OpenClawConfig;
-  agentHarnessId: string;
-  pluginHarnessOwnsTransport: boolean;
-  pluginHarnessOwnsAuthBootstrap: boolean;
-  onSuccessfulAuthBinding?: (binding: AgentExecutionAuthBinding) => void;
-}): void {
+export type PreparedEmbeddedRunAuthSource = {
+  preparedModelRuntime?: Parameters<typeof recordPreparedModelRuntimeAuthSource>[0];
+  preparedAuthPlan?: Pick<
+    AgentRuntimeAuthPlan,
+    "credentialSource" | "selectedAuthMode" | "boundEnvVar" | "retainAutomaticAuthSource"
+  >;
+};
+
+export function reportEmbeddedRunSuccessfulAuthBinding(
+  input: PreparedEmbeddedRunAuthSource & {
+    preparedModelId?: string;
+    noticeContext?: {
+      runParams: Pick<
+        RunEmbeddedAgentInternalParams,
+        | "authProfileStateMode"
+        | "preparedModelRuntimeMode"
+        | "trigger"
+        | "lane"
+        | "terminalReplyExpectation"
+      >;
+      interrupted: boolean;
+      silent: boolean;
+    };
+    profileId?: string;
+    profileStore: AuthProfileStore;
+    apiKeyInfo: ResolvedProviderAuth | null;
+    attempt: EmbeddedRunAttemptResult;
+    provider: string;
+    agentDir?: string;
+    modelId: string;
+    modelApi: string;
+    modelBaseUrl?: string;
+    requestTransportOverrides?: ProviderRouteOverridePresence;
+    config?: OpenClawConfig;
+    agentHarnessId: string;
+    pluginHarnessOwnsTransport: boolean;
+    pluginHarnessOwnsAuthBootstrap: boolean;
+    onSuccessfulAuthBinding?: (binding: AgentExecutionAuthBinding) => void;
+  },
+): string | undefined {
   const credential = input.profileId ? input.profileStore.profiles[input.profileId] : undefined;
   const pluginHarnessApiKeyInfo = resolvePluginHarnessApiKeyInfo({
     apiKeyInfo: input.apiKeyInfo,
@@ -177,6 +207,61 @@ export function reportEmbeddedRunSuccessfulAuthBinding(input: {
         }
       : {}),
   });
+  const plannedSource = input.preparedAuthPlan?.credentialSource;
+  const successfulSource: ProviderModelAuthSource | undefined = input.profileId
+    ? {
+        kind: "profile",
+        profileId: input.profileId,
+        provider: credential?.provider ?? input.provider,
+        mode: input.apiKeyInfo?.mode ?? input.preparedAuthPlan?.selectedAuthMode,
+        readiness: "ready",
+        cooldown: "clear",
+      }
+    : plannedSource?.kind === "direct"
+      ? {
+          ...plannedSource,
+          mode: input.apiKeyInfo?.mode ?? input.preparedAuthPlan?.selectedAuthMode,
+          boundEnvVar: input.preparedAuthPlan?.boundEnvVar,
+          readiness: "ready",
+        }
+      : undefined;
+  const context = input.noticeContext;
+  if (
+    input.preparedModelRuntime &&
+    context &&
+    !context.interrupted &&
+    input.preparedAuthPlan?.retainAutomaticAuthSource === true &&
+    context.runParams.authProfileStateMode !== "read-only" &&
+    context.runParams.preparedModelRuntimeMode !== "isolated-read-only" &&
+    successfulSource &&
+    recordPreparedModelRuntimeAuthSource(
+      input.preparedModelRuntime,
+      input.provider,
+      input.preparedModelId ?? input.modelId,
+      successfulSource,
+      !context.silent &&
+        context.runParams.terminalReplyExpectation !== "optional" &&
+        context.runParams.lane !== AGENT_LANE_SUBAGENT &&
+        (context.runParams.trigger == null ||
+          context.runParams.trigger === "user" ||
+          context.runParams.trigger === "manual"),
+    ) &&
+    successfulSource.kind === "profile"
+  ) {
+    return `Using ${sanitizeForLog(input.provider)} account ${sanitizeForLog(successfulSource.profileId)} because the previous credential is no longer available.`;
+  }
+  return undefined;
+}
+
+export function appendEmbeddedRunAuthSourceNotice(
+  payloads: EmbeddedAgentRunResult["payloads"],
+  notice: string | undefined,
+): EmbeddedAgentRunResult["payloads"] {
+  return notice
+    ? [...(payloads ?? []), markReplyPayloadForSourceSuppressionDelivery({ text: notice })]
+    : payloads?.length
+      ? payloads
+      : undefined;
 }
 
 function resolveHarnessAuthMaterialization(

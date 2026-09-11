@@ -170,6 +170,7 @@ export async function prepareDirectCompactionAttempt(
     selectedPreparedHarness,
     providerUsesProfileScopedModelMetadata,
   } = await prepareCompactionHarnessAuth({
+    preparedModelRuntime,
     ...params,
     provider,
     metadataProvider: runtimeProvider,

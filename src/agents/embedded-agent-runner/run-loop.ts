@@ -692,6 +692,8 @@ export async function runPreparedEmbeddedLoop(
         profileFailureStore,
         attemptAuthProfileStore,
         apiKeyInfo: getApiKeyInfo(),
+        preparedModelRuntime: input.preparedModelRuntime,
+        preparedAuthPlan: terminalAuthPlan,
         agentHarnessId: agentHarness.id,
         settledTurnFinalizationOutcome,
         pluginHarnessOwnsTransport,

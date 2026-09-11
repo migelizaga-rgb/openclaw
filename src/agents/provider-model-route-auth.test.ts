@@ -53,6 +53,30 @@ function direct(
 }
 
 describe("provider model route auth", () => {
+  it.each(["ready", "unknown", "unavailable"] as const)(
+    "retains a %s current direct source before account fallback across physical routes",
+    (readiness) => {
+      const decision = selectProviderModelRouteAuth({
+        provider: "openai",
+        resolution: routes,
+        sourcePlan: buildProviderModelAuthSourcePlan({
+          profiles: [profile("openai:subscription", "oauth", "ready")],
+          preferredDirectSource: { ...direct("api-key"), readiness },
+        }),
+      });
+      expect(decision).toMatchObject({ kind: "selected" });
+      if (decision.kind !== "selected") {
+        throw new Error("Expected the current source or its saved account fallback");
+      }
+      expect(decision.attempts.map((attempt) => attempt.kind)).toEqual(
+        readiness === "unavailable" ? ["profile"] : ["direct", "profile"],
+      );
+      expect(decision.selection.route.authRequirement).toBe(
+        readiness === "unavailable" ? "subscription" : "api-key",
+      );
+    },
+  );
+
   it.each([
     ["api-key", "api-key", "api_key"],
     ["api_key", "api-key", "api_key"],

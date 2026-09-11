@@ -1,7 +1,5 @@
 /** Runs complete model-catalog discovery outside the Gateway event loop. */
-import { isDeepStrictEqual } from "node:util";
 import {
-  getConfigProviderUseBindings,
   getConfigResolutionFacts,
   serializeConfigResolutionFacts,
 } from "../config/resolution-facts.js";
@@ -18,10 +16,6 @@ import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-
 import { listManifestSyntheticAuthProviderRefs } from "../plugins/synthetic-auth.runtime.js";
 import type { PreparedAgentCredentialModes } from "./agent-auth-credential-modes.js";
 import { cloneAuthProfileStore } from "./auth-profiles/clone.js";
-import {
-  captureRuntimeAuthProfileAccountIdentities,
-  type RuntimeAuthProfileAccountIdentities,
-} from "./auth-profiles/runtime-snapshots.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import type { ModelCatalogAuthLabels } from "./model-catalog-auth-labels.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
@@ -66,7 +60,6 @@ type PreparedModelWorkerCommand =
 export type PreparedModelWorkerRequest = PreparedModelWorkerCommand &
   Readonly<{
     syntheticAuth: PreparedSyntheticAuthFacts;
-    providerUseBindingAccounts?: RuntimeAuthProfileAccountIdentities;
   }>;
 
 export type PreparedModelWorkerResult =
@@ -232,15 +225,8 @@ export function createPreparedModelCatalogWorker(
   let stoppedError: Error | undefined;
   let releaseProcessLifetime: (() => void) | undefined;
   let expectedFingerprint: string | undefined;
-  let requestAccountIdentities: RuntimeAuthProfileAccountIdentities | undefined;
   const captures = new Map<AbortController, Promise<PreparedSyntheticAuthFacts>>();
-  const isCurrent = () =>
-    params.isCurrent() &&
-    (!requestAccountIdentities ||
-      isDeepStrictEqual(
-        requestAccountIdentities,
-        captureRuntimeAuthProfileAccountIdentities(workerInput.input.env),
-      ));
+  const isCurrent = params.isCurrent;
   const assertCurrent = () => {
     if (stoppedError) {
       throw stoppedError;
@@ -356,13 +342,7 @@ export function createPreparedModelCatalogWorker(
           const value = {
             ...command,
             syntheticAuth,
-            ...(Object.keys(getConfigProviderUseBindings(input.config)).length > 0
-              ? {
-                  providerUseBindingAccounts: captureRuntimeAuthProfileAccountIdentities(input.env),
-                }
-              : {}),
           };
-          requestAccountIdentities = value.providerUseBindingAccounts;
           expectedFingerprint = fingerprintPreparedModelWorkerRequest(workerInput, value);
           return value;
         },

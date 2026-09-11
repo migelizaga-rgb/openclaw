@@ -59,6 +59,9 @@ function createModelsListAuthResolver(params: {
   preparedRuntimeAuthModes?: PreparedAgentCredentialModes;
   preparedRuntimeAuthMaterializations?: readonly RuntimeAuthMaterialization[];
   preparedSyntheticAuthComplete?: boolean;
+  preferredAuthSource?: Parameters<
+    typeof createModelAuthAvailabilityResolver
+  >[0]["preferredAuthSource"];
   workspaceDir: string;
   routeResolverFactory?: typeof createOpenAIModelRoutesResolver;
 }): ModelAuthAvailabilityResolver {
@@ -74,6 +77,7 @@ function createModelsListAuthResolver(params: {
     metadataSnapshot: params.metadataSnapshot,
     preparedRuntimeAuthModes: params.preparedRuntimeAuthModes,
     preparedRuntimeAuthMaterializations: params.preparedRuntimeAuthMaterializations,
+    preferredAuthSource: params.preferredAuthSource,
     preparedSyntheticAuthComplete: params.preparedSyntheticAuthComplete,
     skipSetupProviderFallback: true,
     syntheticAuthProviderRefs: listEnabledSyntheticAuthProviderRefs(
@@ -178,6 +182,9 @@ export type ModelCatalogDecisionParams = {
   preparedRuntimeAuthModes?: PreparedAgentCredentialModes;
   preparedRuntimeAuthMaterializations?: readonly RuntimeAuthMaterialization[];
   preparedSyntheticAuthComplete?: boolean;
+  preferredAuthSource?: Parameters<
+    typeof createModelAuthAvailabilityResolver
+  >[0]["preferredAuthSource"];
   requesterProfileId?: string;
   pluginRegistry?: PluginRegistry;
   observationConfig?: OpenClawConfig;
@@ -291,6 +298,7 @@ export function createModelCatalogDecisions(params: ModelCatalogDecisionParams) 
     preparedAuthStore: authStore,
     preparedRuntimeAuthModes: params.preparedRuntimeAuthModes,
     preparedRuntimeAuthMaterializations: params.preparedRuntimeAuthMaterializations,
+    preferredAuthSource: params.preferredAuthSource,
     preparedSyntheticAuthComplete:
       params.preparedSyntheticAuthComplete ?? isPreparedModelCatalogFull(params.snapshot),
     workspaceDir,
@@ -442,6 +450,7 @@ export function createModelCatalogDecisions(params: ModelCatalogDecisionParams) 
       }
       return choices.length === 0 && unknown ? undefined : choices;
     },
+    preferredAuthSource: params.preferredAuthSource,
     authMaterializations: params.preparedRuntimeAuthMaterializations,
     pluginRegistry: params.pluginRegistry,
     isCurrent,

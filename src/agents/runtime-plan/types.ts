@@ -184,6 +184,8 @@ export type AgentRuntimeModelAttempt = {
 };
 
 export type AgentRuntimeAuthPlan = {
+  /** The planner permits retaining this automatically selected credential after success. */
+  retainAutomaticAuthSource?: boolean;
   providerForAuth: string;
   /** Model whose order, cooldown, and route facts produced this plan. */
   modelId?: string;

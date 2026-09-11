@@ -199,6 +199,7 @@ describe("gateway prepared model catalog", () => {
     expect(projected).not.toHaveProperty("metadataSnapshot");
     expect(projected).not.toHaveProperty("pluginRegistry");
     expect(projected).not.toHaveProperty("isCurrent");
+    expect(projected).not.toHaveProperty("preferredAuthSource");
 
     expect(loadPublishedPreparedModelCatalogOwnerSnapshot).toHaveBeenCalledWith({
       agentId: "worker",

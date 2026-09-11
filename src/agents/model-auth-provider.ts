@@ -1,7 +1,9 @@
 /**
  * Ordered credential resolution for one provider request.
  */
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { formatCliCommand } from "../cli/command-format.js";
+import { getConfigProviderUseBindings } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -98,13 +100,19 @@ function assertProviderAuthReady(params: {
   provider: string;
   cfg?: OpenClawConfig;
   agentDir?: string;
+  profileId?: string;
 }): void {
   // Pending credential files own their providers' auth routes until Doctor commits
   // and archives them; do not fall through to env/config credentials.
   assertAuthProfileMigrationReady(params.agentDir, undefined, params.provider, params.cfg);
   // A failed explicit ref owns the provider. Stop before profile/env discovery so requests cannot
   // silently switch credentials while this configured owner is cold.
-  assertRuntimeProviderSecretOwnerAvailable({ cfg: params.cfg, provider: params.provider });
+  if (
+    !params.profileId ||
+    !getConfigProviderUseBindings(params.cfg)[normalizeProviderId(params.provider)]
+  ) {
+    assertRuntimeProviderSecretOwnerAvailable({ cfg: params.cfg, provider: params.provider });
+  }
 }
 
 /** Resolves a stored provider-entry binding without general credential discovery. */
@@ -205,7 +213,7 @@ export async function resolveApiKeyForProviderCore(input: {
       resolveProviderDeprecatedAuthProfileIds({ provider, config: cfg }),
     ));
   const agentDir = params.agentDir?.trim() || (cfg ? resolveDefaultAgentDir(cfg) : undefined);
-  assertProviderAuthReady({ cfg, provider, agentDir });
+  assertProviderAuthReady({ cfg, provider, agentDir, profileId });
   let scopedStore: AuthProfileStore | undefined = params.store;
   const getScopedStore = (requestedProfileId?: string) =>
     (scopedStore ??= resolveScopedAuthProfileStore({

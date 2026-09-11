@@ -156,7 +156,7 @@ describe("independently admitted provider environment fallback", () => {
     expect(prepare().attempts).toMatchObject([{ kind: "direct" }]);
     expect(available()).toBe(true);
     await withSetupCredentialAccess({ profileId }, async () => {
-      expect(prepare).toThrow("No usable bound auth profile");
+      expect(prepare).toThrow("No usable authentication for provider");
       expect(available()).toBe(false);
     });
     expect(prepare().attempts).toMatchObject([{ kind: "direct" }]);

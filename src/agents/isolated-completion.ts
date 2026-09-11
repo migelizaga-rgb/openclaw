@@ -11,7 +11,7 @@ import type { ThinkLevel } from "../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withTempWorkspace } from "../infra/private-temp-workspace.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
-import type { AssistantMessage, Model } from "../llm/types.js";
+import type { AssistantMessage } from "../llm/types.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { runWithAsyncWorkResources } from "../shared/async-work-resources.js";
 import { prepareSystemAgentRunAdmission } from "./admitted-run-context.js";
@@ -28,7 +28,7 @@ import type {
   AgentHarnessIsolatedCompletionParamsV2,
   AgentHarnessIsolatedCompletionResult,
 } from "./harness/types.js";
-import { ensureAuthProfileStore } from "./model-auth.js";
+import { prepareIsolatedHarnessAuth } from "./isolated-completion.auth.js";
 import {
   isCliRuntimeAliasForProvider,
   resolveCliRuntimeExecutionProvider,
@@ -44,7 +44,6 @@ import {
 import { materializePreparedRuntimeModel } from "./runtime-plan/materialize-model.js";
 import {
   canRunPreparedAgentRuntimeAuthAttempt,
-  prepareAgentRuntimeAuth,
   preparedAgentRuntimeProfileAttemptHasCandidate,
   type PreparedAgentRuntimeAuthAttempt,
 } from "./runtime-plan/prepare-auth.js";
@@ -529,53 +528,20 @@ async function runIsolatedCompletionOwned(
       let result: AgentHarnessIsolatedCompletionResult | undefined;
       if (harness.runIsolatedCompletionV2) {
         let modelMaxTokens: number | undefined;
-        let harnessAuth:
-          | {
-              model: Model;
-              store: ReturnType<typeof ensureAuthProfileStore>;
-              attempts: readonly PreparedAgentRuntimeAuthAttempt[];
-            }
-          | undefined;
-        if (harness.authBootstrap === "harness") {
-          const resolution = await resolveModelAsync(provider, request.model, agentDir, config, {
-            ...lease.snapshot.createStores(),
-            preparedModelRuntime: lease.snapshot,
-            workspaceDir,
-            authProfileId: request.authProfileId,
-            skipAgentDiscovery: true,
-            allowBundledStaticCatalogFallback: true,
-            preferBundledStaticCatalogTransport: true,
-          });
-          const runtimeModel = resolution.model;
-          if (!runtimeModel) {
-            throw new IsolatedCompletionError(
-              "runtime-unavailable",
-              resolution.error ?? `Unknown isolated completion model ${provider}/${request.model}.`,
-            );
-          }
-          assertCurrent();
-          const authProfileStore = ensureAuthProfileStore(agentDir, {
-            profileId: request.authProfileId,
-            readOnly: true,
-            allowKeychainPrompt: false,
-            config,
-          });
-          const authAttempts = prepareAgentRuntimeAuth({
-            provider: runtimeModel.provider,
-            modelId: runtimeModel.id,
-            modelApi: runtimeModel.api,
-            modelBaseUrl: runtimeModel.baseUrl,
-            ...context,
-            env: process.env,
-            authProfileStore,
-            sessionAuthProfileId: request.authProfileId,
-            sessionAuthProfileSource: request.authProfileId ? "user" : undefined,
-            harnessId: harness.id,
-            harnessRuntime: harness.id,
-            harnessAuthBootstrap: harness.authBootstrap,
-          }).attempts;
-          harnessAuth = { model: runtimeModel, store: authProfileStore, attempts: authAttempts };
-        }
+        const harnessAuth =
+          harness.authBootstrap === "harness"
+            ? await prepareIsolatedHarnessAuth({
+                provider,
+                modelId: request.model,
+                ...context,
+                authProfileId: request.authProfileId,
+                preparedModelRuntime: lease.snapshot,
+                harness,
+                assertCurrent,
+                unavailable: (message) =>
+                  new IsolatedCompletionError("runtime-unavailable", message),
+              })
+            : undefined;
         let firstError: unknown;
         let priorProfileAttempted = false;
         for (const preparedAttempt of harnessAuth?.attempts.length

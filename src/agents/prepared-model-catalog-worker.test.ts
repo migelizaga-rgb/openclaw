@@ -110,27 +110,22 @@ describe("prepared model catalog worker input", () => {
         syntheticAuth: [{ ...request.syntheticAuth[0]!, result: null }],
       }),
     ).not.toBe(fingerprint);
-    const withAccounts = {
+    const authRefresh = {
       ...request,
-      providerUseBindingAccounts: {
-        owner: {
-          kind: "resolved" as const,
-          location: "state-db" as const,
-          sharedDatabasePath: "/tmp/shared/openclaw.sqlite",
-        },
-        profiles: [{ profileId: "saved:other", provider: "shared" }],
-      },
+      kind: "auth-refresh" as const,
+      providerIds: ["shared"],
+      profileIds: ["shared:named"],
     };
-    const accountFingerprint = fingerprintPreparedModelWorkerRequest(cloned, withAccounts);
-    expect(accountFingerprint).not.toBe(fingerprint);
-    expect(fingerprintPreparedModelWorkerRequest(cloned, structuredClone(withAccounts))).toBe(
-      accountFingerprint,
+    const refreshFingerprint = fingerprintPreparedModelWorkerRequest(cloned, authRefresh);
+    expect(refreshFingerprint).not.toBe(fingerprint);
+    expect(fingerprintPreparedModelWorkerRequest(cloned, structuredClone(authRefresh))).toBe(
+      refreshFingerprint,
     );
     expect(
       fingerprintPreparedModelWorkerRequest(cloned, {
-        ...withAccounts,
-        providerUseBindingAccounts: { ...withAccounts.providerUseBindingAccounts, profiles: [] },
+        ...authRefresh,
+        profileIds: ["shared:replacement"],
       }),
-    ).not.toBe(accountFingerprint);
+    ).not.toBe(refreshFingerprint);
   });
 });

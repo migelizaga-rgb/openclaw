@@ -13,6 +13,7 @@ type ModelRuntimeBinding = {
   runtime?: LlmRuntime;
   completionTransport?: Model;
   completionOwner?: ModelCompletionOwner;
+  onSuccessfulCompletion?: () => void;
 };
 
 type RuntimeBoundModel = Model & {
@@ -38,7 +39,20 @@ export function bindModelLlmRuntime(
     runtime,
     completionTransport,
     completionOwner: getModelCompletionOwner(model),
+    onSuccessfulCompletion: getModelCompletionSuccess(model),
   });
+}
+
+/** Carries an internal success observer without changing the SDK model shape. */
+export function bindModelCompletionSuccess(
+  model: RuntimeBoundModel,
+  onSuccessfulCompletion: () => void,
+): Model {
+  return bindModelRuntime(model, { ...model[MODEL_LLM_RUNTIME], onSuccessfulCompletion });
+}
+
+export function getModelCompletionSuccess(model: RuntimeBoundModel): (() => void) | undefined {
+  return model[MODEL_LLM_RUNTIME]?.onSuccessfulCompletion;
 }
 
 export function bindModelCompletionOwner(

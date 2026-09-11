@@ -57,8 +57,12 @@ After one successful tool-free turn, setup asks whether to activate it. Declinin
 or failing the test keeps the saved credential inactive and preserves the current
 connection. Model Setup offers the same saved sign-in for a fresh test without
 another login. Gateway activation waits for config application; a required restart
-keeps the replacement inactive until setup is retried. Ordinary login remains
-immediate. The descriptor retains the selected model and connection settings for retry after
+keeps the replacement inactive until setup is retried. Ordinary login makes the
+account available immediately, without replacing a working automatic credential.
+Automatic routing can switch to a compatible saved account if its current
+credential becomes unusable, with one visible provider/profile notice. Explicit
+account selection and verified activation retain their precedence.
+The descriptor retains the selected model and connection settings for retry after
 restart, without caching a verification result. This adds no database schema or
 migration; older runtimes do not enforce the inactive state. Before downgrading,
 remove saved inactive replacements or restore the state from before setup.

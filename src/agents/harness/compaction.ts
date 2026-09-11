@@ -17,6 +17,7 @@ import {
 } from "../model-auth.js";
 import { isCliRuntimeAliasForProvider, isCliRuntimeProvider } from "../model-runtime-aliases.js";
 import { isOpenAIProvider } from "../openai-routing.js";
+import { getPreparedModelRuntimePreferredAuthSource } from "../prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.js";
 import {
   unwrapModelHeaderSentinelsForProviderEgress,
@@ -216,6 +217,11 @@ async function resolveHarnessCompactApiKey(params: {
         profileId: compactParams.authProfileId ?? reusableRuntimeAuthPlan?.forwardedAuthProfileId,
         allowKeychainPrompt: false,
       });
+  const preferredAuthSource = getPreparedModelRuntimePreferredAuthSource(
+    params.preparedModelRuntime,
+    provider,
+    modelId,
+  );
   const prepareRuntimeAuth = (harness: AgentHarness) =>
     prepareAgentRuntimeAuth({
       provider,
@@ -227,6 +233,10 @@ async function resolveHarnessCompactApiKey(params: {
       agentDir,
       workspaceDir,
       authProfileStore: runtimeAuthProfileStore,
+      preferredDirectSource:
+        preferredAuthSource?.kind === "direct" ? preferredAuthSource : undefined,
+      preferredAuthProfileId:
+        preferredAuthSource?.kind === "profile" ? preferredAuthSource.profileId : undefined,
       sessionAuthProfileId: compactParams.authProfileId,
       sessionAuthProfileSource: compactParams.authProfileIdSource,
       harnessId: harness.id,

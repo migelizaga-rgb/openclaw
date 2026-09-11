@@ -6,6 +6,7 @@ import {
   makeEmbeddedRunnerAttempt,
 } from "../../test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import {
+  type appendEmbeddedRunAuthSourceNotice,
   markEmbeddedRunAuthProfileSuccess,
   reportEmbeddedRunSuccessfulAuthBinding,
 } from "./auth-profile-success.js";
@@ -21,6 +22,9 @@ import {
 import { createEmbeddedRunTerminalRetryState } from "./terminal-retry-state.js";
 
 vi.mock("./auth-profile-success.js", () => ({
+  appendEmbeddedRunAuthSourceNotice: (
+    payloads: Parameters<typeof appendEmbeddedRunAuthSourceNotice>[0],
+  ) => (payloads?.length ? payloads : undefined),
   markEmbeddedRunAuthProfileSuccess: vi.fn(),
   reportEmbeddedRunSuccessfulAuthBinding: vi.fn(),
 }));

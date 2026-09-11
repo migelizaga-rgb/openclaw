@@ -4,7 +4,10 @@ import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { readSessionRuntimeOwnership } from "../../agents/harness/session-runtime-ownership.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import type { ModelRef } from "../../agents/model-ref-shared.js";
-import { getPreparedModelRuntimeAuthMaterializations } from "../../agents/prepared-model-runtime-auth.js";
+import {
+  getPreparedModelRuntimeAuthMaterializations,
+  getPreparedModelRuntimePreferredAuthSource,
+} from "../../agents/prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "../../agents/prepared-model-runtime.js";
 import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
@@ -55,6 +58,8 @@ export async function prepareChatMetadataModelProjection(params: {
     snapshot,
     metadataSnapshot: params.facts.owner.metadataSnapshot,
     preparedAuthStore: params.facts.authStore,
+    preferredAuthSource: (provider, modelId) =>
+      getPreparedModelRuntimePreferredAuthSource(params.facts.owner, provider, modelId),
     requesterProfileId: params.requesterProfileId,
     // The owner records usable auth at discovery; metadata must share that exact generation fact.
     preparedRuntimeAuthModes: params.facts.authModes,

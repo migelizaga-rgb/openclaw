@@ -19,6 +19,9 @@ import { normalizeStateDirEnv } from "../config/paths.js";
 import {
   copyConfigResolutionFacts,
   copyConfigResolutionFactsExcept,
+  getConfigProviderUseBindings,
+  retainConfigProviderUseBindings,
+  setConfigProviderUseBindings,
 } from "../config/resolution-facts.js";
 import { captureConfigOverrideApplier } from "../config/runtime-overrides.js";
 import { resolveSystemMainSessionTarget } from "../config/sessions.js";
@@ -451,6 +454,8 @@ export async function prepareGatewayServerBootstrap(input: {
       previousConfig: previousSourceConfig,
       nextConfig: params.sourceConfig,
     });
+    retainConfigProviderUseBindings(previousSourceConfig, params.sourceConfig);
+    const retainedProviderBindings = getConfigProviderUseBindings(params.sourceConfig);
     const metadata = startupConfigLoad.pluginMetadataSnapshot;
     const pluginCandidate = minimalTestGateway
       ? { runtimeConfig: params.runtimeConfig, compareConfig: params.sourceConfig }
@@ -470,6 +475,10 @@ export async function prepareGatewayServerBootstrap(input: {
         }),
       );
       copyConfigResolutionFacts(config, applied);
+      setConfigProviderUseBindings(applied, {
+        ...retainedProviderBindings,
+        ...getConfigProviderUseBindings(applied),
+      });
       return applied;
     };
     const reapplyRuntimeOverlays = (config: OpenClawConfig): OpenClawConfig =>

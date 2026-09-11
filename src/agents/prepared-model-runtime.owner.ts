@@ -1,17 +1,19 @@
 import path from "node:path";
 import { toStringifiedError } from "@openclaw/normalization-core/error-coercion";
-import { getConfigProviderUseBindings } from "../config/resolution-facts.js";
 import { hashRuntimeConfigValue } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
-import { captureRuntimeAuthProfileAccountIdentities } from "./auth-profiles/runtime-snapshots.js";
 import {
   resolveSelectedAgentHarnessRuntime,
   type AgentHarnessPluginSelection,
 } from "./harness/runtime-plugin-load-plan.js";
 import { resolveLegacyInheritedAuthDir } from "./legacy-inherited-auth-dir.js";
 import { preparePublishedModelCatalogOwnerIdentity } from "./prepared-model-catalog-owner.js";
-import { copyPreparedModelRuntimeAuthBindings } from "./prepared-model-runtime-auth.js";
+import {
+  bindModelRuntimeAuthSources,
+  copyPreparedModelRuntimeAuthBindings,
+  prepareModelRuntimeAuthSources,
+} from "./prepared-model-runtime-auth.js";
 import {
   startSerializedSnapshotBuildBatch,
   type PreparedModelRuntimeBuildResult,
@@ -49,6 +51,7 @@ function publishPreparedModelRuntimeOwnerSnapshot(
   snapshot: PreparedModelRuntimeSnapshot,
 ): PreparedModelRuntimeSnapshot {
   const published = stampPreparedModelRuntimeSnapshotConfig(snapshot, owner.input.config);
+  bindModelRuntimeAuthSources(owner, published);
   if (owner.snapshot) {
     ownersBySnapshot.delete(owner.snapshot);
   }
@@ -77,14 +80,12 @@ export function prepareModelRuntimeOwner(
   existing?: PreparedModelRuntimeOwner,
 ): PreparedModelRuntimeOwner {
   // Preparation precedes async discovery; neither an old nor unpublished snapshot owns these facts.
-  return Object.assign(existing ?? { generation: 0, needsRefresh: true, catalogStale: false }, {
+  const owner = existing ?? { generation: 0, needsRefresh: true, catalogStale: false };
+  prepareModelRuntimeAuthSources(owner, existing?.input, input);
+  return Object.assign(owner, {
     input,
     catalogOwner: preparePublishedModelCatalogOwnerIdentity(input),
     environmentFingerprint: effectiveEnvironmentFingerprint(input),
-    providerUseBindingAccounts:
-      Object.keys(getConfigProviderUseBindings(input.config)).length > 0
-        ? captureRuntimeAuthProfileAccountIdentities(input.env)
-        : undefined,
     catalogMode,
     provenance,
   });

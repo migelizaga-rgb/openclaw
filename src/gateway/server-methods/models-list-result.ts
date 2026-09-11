@@ -385,6 +385,7 @@ export async function prepareModelsListResult(
     preparedAuthStore,
     preparedRuntimeAuthModes,
     preparedRuntimeAuthMaterializations,
+    preferredAuthSource: preparedProjectionOwner?.preferredAuthSource,
     // A complete catalog and its synthetic-auth probes cross the worker boundary together.
     preparedSyntheticAuthComplete: publishedOwner
       ? isPreparedModelCatalogFull(publishedOwner.modelCatalog)
@@ -516,6 +517,7 @@ export async function prepareModelsListResult(
       preparedAuthStore,
       preparedRuntimeAuthModes,
       preparedRuntimeAuthMaterializations,
+      preferredAuthSource: preparedProjectionOwner?.preferredAuthSource,
       pluginRegistry: preparedPluginRegistry,
       isCurrent,
       observationConfig: preparedProjectionOwner?.observationConfig,

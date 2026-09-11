@@ -24,7 +24,6 @@ import { resolveProviderBindingEnvVarCandidates } from "../secrets/provider-env-
 import { isTrustedSecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
 import { resolveRegisteredAgentIdForDir } from "./agent-dir-registry.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
-import { resolveStartupProviderUseBindingConflict } from "./model-auth-runtime-config.js";
 import { resolveSelectedModelProviderIds } from "./model-selection-config.js";
 import type {
   ProviderApiKeyResolver,
@@ -60,21 +59,17 @@ export async function runProviderCatalogForAdmittedDestinations(
   },
 ): Promise<ProviderCatalogResult> {
   const configured: string[] = [];
-  const provisional: string[] = [];
   const bound: string[] = [];
   const startupBindings = getConfigProviderUseBindings(params.config);
   const providerIds = [...new Set(params.providerIds.map(normalizeProviderId))];
   for (const id of providerIds) {
-    (params.admission.get(id)?.kind === "provider-config"
-      ? Object.hasOwn(startupBindings, id)
-        ? provisional
-        : configured
+    (params.admission.get(id)?.kind === "provider-config" && !Object.hasOwn(startupBindings, id)
+      ? configured
       : bound
     ).push(id);
   }
   const scopes = [
     ...(configured.length ? [{ ids: configured, allowDonor: true }] : []),
-    ...provisional.map((id) => ({ ids: [id], allowDonor: true })),
     ...bound.map((id) => ({ ids: [id], allowDonor: false })),
   ].toSorted(
     (left, right) =>
@@ -87,58 +82,26 @@ export async function runProviderCatalogForAdmittedDestinations(
   for (const scope of scopes) {
     const includes = (provider: string) => scope.ids.includes(normalizeProviderId(provider));
     const canResolve = (provider: string) => scope.allowDonor || includes(provider);
-    let conflict: ReturnType<typeof resolveStartupProviderUseBindingConflict>;
-    const assertCurrentScope = () => {
-      for (const provider of scope.ids) {
-        conflict = resolveStartupProviderUseBindingConflict({
-          ...params,
-          provider,
-          cfg: params.config,
-          store: params.authStore,
-        });
-        if (conflict) {
-          throw conflict;
+    const result = await params.run({
+      providerIds: scope.ids,
+      resolveProviderApiKey: (providerId) => {
+        const provider = providerId?.trim() || params.provider.id;
+        return canResolve(provider)
+          ? params.resolveProviderApiKey(provider)
+          : { apiKey: undefined, discoveryApiKey: undefined };
+      },
+      resolveProviderAuth: (providerId, options) => {
+        const provider = providerId?.trim() || params.provider.id;
+        return canResolve(provider)
+          ? params.resolveProviderAuth(provider, options)
+          : { apiKey: undefined, mode: "none", source: "none" };
+      },
+      reportCatalogOutcome: (outcome) => {
+        if (includes(outcome.provider)) {
+          params.reportCatalogOutcome?.(outcome);
         }
-      }
-    };
-    let result: ProviderCatalogResult;
-    try {
-      assertCurrentScope();
-      result = await params.run({
-        providerIds: scope.ids,
-        resolveProviderApiKey: (providerId) => {
-          assertCurrentScope();
-          const provider = providerId?.trim() || params.provider.id;
-          return canResolve(provider)
-            ? params.resolveProviderApiKey(provider)
-            : { apiKey: undefined, discoveryApiKey: undefined };
-        },
-        resolveProviderAuth: (providerId, options) => {
-          assertCurrentScope();
-          const provider = providerId?.trim() || params.provider.id;
-          return canResolve(provider)
-            ? params.resolveProviderAuth(provider, options)
-            : { apiKey: undefined, mode: "none", source: "none" };
-        },
-        reportCatalogOutcome: (outcome) => {
-          assertCurrentScope();
-          if (includes(outcome.provider)) {
-            params.reportCatalogOutcome?.(outcome);
-          }
-        },
-      });
-      if (result) {
-        assertCurrentScope();
-      }
-    } catch (error) {
-      if (!conflict || error !== conflict) {
-        throw error;
-      }
-      for (const provider of scope.ids) {
-        params.reportCatalogOutcome?.({ provider, status: "unavailable" });
-      }
-      continue;
-    }
+      },
+    });
     if (!result) {
       continue;
     }

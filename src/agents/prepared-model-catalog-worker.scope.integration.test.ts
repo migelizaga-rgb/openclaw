@@ -33,8 +33,7 @@ import { startSerializedSnapshotBuildBatch } from "./prepared-model-runtime.buil
 import { prepareModelRuntimeOwner } from "./prepared-model-runtime.owner.js";
 import { usePreparedCatalogWorkerFixtures } from "./test-helpers/prepared-model-catalog-worker-fixture.js";
 
-const { makeTempDir, retireAfterTest, waitForWorkers, waitForMarker } =
-  usePreparedCatalogWorkerFixtures();
+const { makeTempDir, retireAfterTest, waitForMarker } = usePreparedCatalogWorkerFixtures();
 
 async function createStartupBindingSnapshot() {
   const fixture = createCatalogFixture(makeTempDir, 0, {
@@ -237,7 +236,7 @@ describe("prepared model catalog worker plugin scope", () => {
     expect(fs.existsSync(unrelatedMarker)).toBe(false);
   });
   it.each(["added", "removed", "another root"] as const)(
-    "fences delayed catalog publication when another agent account is %s",
+    "keeps delayed catalog publication current when another agent account is %s",
     async (change) => {
       const fixture = await createStartupBindingSnapshot();
       const oldStateDir = process.env.OPENCLAW_STATE_DIR;
@@ -305,18 +304,11 @@ describe("prepared model catalog worker plugin scope", () => {
             profileSetChanged: true,
           },
         );
-        if (change === "another root") {
-          expect(invalidated.invalidatedOwners).toEqual([]);
-          fs.rmSync(barrier);
-          await expect(catalog).resolves.toBeDefined();
-        } else {
-          expect(invalidated.invalidatedOwners).toEqual([owner]);
-          expect(owner.generation).toBe(1);
-          expect(owner.catalogStale).toBe(true);
-          await expect(catalog).rejects.toThrow("superseded");
-          await waitForWorkers();
-          expect(fs.readFileSync(fixture.marker, "utf8")).toBe("start\n");
-        }
+        expect(invalidated.invalidatedOwners).toEqual([]);
+        expect(owner.generation).toBe(0);
+        expect(owner.catalogStale).toBe(false);
+        fs.rmSync(barrier);
+        await expect(catalog).resolves.toBeDefined();
       } finally {
         fixture.supersede();
         fs.rmSync(barrier, { force: true });

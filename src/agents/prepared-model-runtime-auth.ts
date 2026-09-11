@@ -1,12 +1,115 @@
 import { isDeepStrictEqual } from "node:util";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { getConfigProviderUseBindings } from "../config/resolution-facts.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PreparedAgentCredentialModes } from "./agent-auth-credential-modes.js";
 import { isOAuthRefreshFence } from "./auth-profiles/oauth-refresh-marker.js";
 import { hasOAuthIdentity } from "./auth-profiles/oauth-shared.js";
 import type { RuntimeAuthMaterialization } from "./auth-profiles/runtime-materializations.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import type { ModelCatalogAuthLabels } from "./model-catalog-auth-labels.js";
+import type { ProviderModelAuthSource } from "./provider-model-auth-source-plan.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
+
+type AuthSourceState = {
+  current: Map<string, ProviderModelAuthSource>;
+  preferred: Map<string, ProviderModelAuthSource>;
+  pendingNotice: Map<string, string>;
+  retainOnSuccess: boolean;
+  readOnly: boolean;
+};
+const authSourcesByOwner = new WeakMap<object, AuthSourceState>();
+const authSourcesBySnapshot = new WeakMap<object, AuthSourceState>();
+
+function authSourceKey(provider: string, modelId: string): string {
+  return JSON.stringify([normalizeProviderId(provider), modelId]);
+}
+
+/** Account publication retains successful automatic choices, not credential material. */
+export function prepareModelRuntimeAuthSources(
+  owner: object,
+  previous: { agentDir: string; config: OpenClawConfig; readOnly?: boolean } | undefined,
+  next: { agentDir: string; config: OpenClawConfig; readOnly?: boolean },
+): void {
+  if (
+    previous?.agentDir === next.agentDir &&
+    previous.readOnly === next.readOnly &&
+    authSourcesByOwner.has(owner)
+  ) {
+    return;
+  }
+  authSourcesByOwner.set(owner, {
+    current: new Map(),
+    preferred: new Map(),
+    pendingNotice: new Map(),
+    retainOnSuccess: false,
+    readOnly: next.readOnly === true,
+  });
+}
+
+export function retainModelRuntimeAuthSourcesAfterMutation(owner: object): void {
+  const state = authSourcesByOwner.get(owner);
+  if (state) {
+    state.preferred = new Map(state.current);
+    state.retainOnSuccess = true;
+  }
+}
+
+export function bindModelRuntimeAuthSources(owner: object, snapshot: object): void {
+  const state = authSourcesByOwner.get(owner);
+  if (state) {
+    authSourcesBySnapshot.set(snapshot, state);
+  }
+}
+
+export function getPreparedModelRuntimePreferredAuthSource(
+  snapshot: object | undefined,
+  provider: string,
+  modelId: string,
+): ProviderModelAuthSource | undefined {
+  return snapshot
+    ? authSourcesBySnapshot.get(snapshot)?.preferred.get(authSourceKey(provider, modelId))
+    : undefined;
+}
+
+/** Only successful automatic runs can change the current source or publish its notice. */
+export function recordPreparedModelRuntimeAuthSource(
+  snapshot: { config: OpenClawConfig; isCurrent: () => boolean },
+  provider: string,
+  modelId: string,
+  source: ProviderModelAuthSource,
+  notify = true,
+): boolean {
+  const state = authSourcesBySnapshot.get(snapshot);
+  if (!state || state.readOnly || !snapshot.isCurrent()) {
+    return false;
+  }
+  const key = authSourceKey(provider, modelId);
+  const previous = state.preferred.get(key);
+  const generatedBinding = getConfigProviderUseBindings(snapshot.config)[
+    normalizeProviderId(provider)
+  ];
+  if (
+    source.kind === "profile" &&
+    ((previous && (previous.kind !== "profile" || previous.profileId !== source.profileId)) ||
+      (!previous && generatedBinding))
+  ) {
+    state.pendingNotice.set(key, source.profileId);
+  }
+  state.current.set(key, source);
+  if (previous || generatedBinding || state.retainOnSuccess) {
+    state.preferred.set(key, source);
+  }
+  if (source.kind !== "profile" || state.pendingNotice.get(key) !== source.profileId) {
+    state.pendingNotice.delete(key);
+    return false;
+  }
+  if (!notify) {
+    return false;
+  }
+  state.pendingNotice.delete(key);
+  return true;
+}
 
 export type PreparedModelRuntimeAuth = Readonly<{
   authStore: AuthProfileStore;
@@ -168,6 +271,10 @@ export function getPreparedModelRuntimeAuthMaterializations(
 }
 
 export function copyPreparedModelRuntimeAuthBindings(source: object, target: object): void {
+  const sources = authSourcesBySnapshot.get(source);
+  if (sources) {
+    authSourcesBySnapshot.set(target, sources);
+  }
   const authStore = authStoreBySnapshot.get(source);
   const labels = authLabelsBySnapshot.get(source);
   const authLoader = authLoaderBySnapshot.get(source);

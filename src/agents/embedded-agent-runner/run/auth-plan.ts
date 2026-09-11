@@ -10,6 +10,7 @@ import {
   ensureAuthProfileStoreWithoutExternalProfiles,
 } from "../../model-auth.js";
 import { OPENAI_PROVIDER_ID } from "../../openai-routing.js";
+import { getPreparedModelRuntimePreferredAuthSource } from "../../prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "../../prepared-model-runtime.js";
 import { buildAgentRuntimeAuthPlan } from "../../runtime-plan/auth.js";
 import {
@@ -170,6 +171,11 @@ export async function prepareEmbeddedRunAuthPlan(params: {
       });
       return { plan, attempts: [{ kind: "implicit", plan }] };
     }
+    const preferredSource = getPreparedModelRuntimePreferredAuthSource(
+      params.preparedModelRuntime,
+      params.provider,
+      params.modelId,
+    );
     return prepareAgentRuntimeAuth({
       provider: params.provider,
       modelId: params.modelId,
@@ -184,6 +190,9 @@ export async function prepareEmbeddedRunAuthPlan(params: {
       authProfileStore: attemptAuthProfileStore,
       sessionAuthProfileId: preferredProfileId,
       sessionAuthProfileSource: runParams.authProfileIdSource,
+      preferredDirectSource: preferredSource?.kind === "direct" ? preferredSource : undefined,
+      preferredAuthProfileId:
+        preferredSource?.kind === "profile" ? preferredSource.profileId : undefined,
       allowAuthProfileFallback: runParams.allowAuthProfileFallback,
       harnessId: harness.id,
       harnessRuntime: harness.id,

@@ -8,6 +8,7 @@ import type { GatewayModelCatalogSnapshot } from "./server-model-catalog.types.j
 export type PreparedGatewayModelCatalogSnapshot = GatewayModelCatalogSnapshot &
   Pick<
     ResolvedPublishedModelCatalogOwner,
+    | "preferredAuthSource"
     | "authModes"
     | "authStore"
     | "metadataSnapshot"

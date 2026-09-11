@@ -159,6 +159,19 @@ export function selectProviderModelAuthSources(params: {
   }
 
   const { fallback, profiles } = params.plan;
+  const preferred = params.plan.preferredDirectSource;
+  if (preferred && preferred.readiness !== "unavailable" && !profiles.explicitOrder) {
+    return {
+      kind: "selected",
+      selection: { kind: "selected", source: preferred },
+      attempts: [
+        directAttempt(preferred),
+        ...(profiles.kind === "usable"
+          ? profiles.profiles.map((source) => ({ kind: "profile" as const, source }))
+          : []),
+      ],
+    };
+  }
   if (profiles.kind === "all-cooldown") {
     if (fallback?.boundEnvVar && fallback.readiness === "ready" && !profiles.explicitOrder) {
       return {
@@ -338,6 +351,11 @@ export function selectProviderModelRouteAuth(params: {
           // zero-config and thereby re-admit an ambient credential.
           declaredProfileCount: params.sourcePlan.declaredProfileCount,
           ...(params.sourcePlan.fallback ? { fallback: params.sourcePlan.fallback } : {}),
+          ...(params.sourcePlan.preferredDirectSource &&
+          resolveProviderModelRouteAuthRequirement(params.sourcePlan.preferredDirectSource.mode) ===
+            configuredRequirement
+            ? { preferredDirectSource: params.sourcePlan.preferredDirectSource }
+            : {}),
         })
       : params.sourcePlan;
   const sourceDecision = selectProviderModelAuthSources({
@@ -444,7 +462,8 @@ export function selectProviderModelRouteAuth(params: {
       configuredRoute,
     );
   }
-  const selectedRoute = winner?.route ?? directRoute;
+  const directFirst = sourceDecision.attempts[0]?.kind === "direct" && Boolean(directRoute);
+  const selectedRoute = directFirst ? directRoute : (winner?.route ?? directRoute);
   if (!selectedRoute) {
     return reject(
       "configured-auth",
@@ -475,21 +494,29 @@ export function selectProviderModelRouteAuth(params: {
     }),
   );
   if (directSource && directRoute) {
-    attempts.push({
+    const attempt: ProviderModelRouteAuthAttempt = {
       kind: "direct",
       source: directSource,
       route: directRoute,
       allowAuthProfileFallback: false,
-    });
+    };
+    if (directFirst) {
+      attempts.unshift(attempt);
+    } else {
+      attempts.push(attempt);
+    }
   }
 
-  const selection: ProviderModelAuthSourceSelection = winner
-    ? { kind: "selected", source: winner.source }
-    : directSource
+  const selection: ProviderModelAuthSourceSelection =
+    directFirst && directSource
       ? { kind: "selected", source: directSource }
-      : sourceDecision.selection.kind === "unavailable"
-        ? sourceDecision.selection
-        : { kind: "none" };
+      : winner
+        ? { kind: "selected", source: winner.source }
+        : directSource
+          ? { kind: "selected", source: directSource }
+          : sourceDecision.selection.kind === "unavailable"
+            ? sourceDecision.selection
+            : { kind: "none" };
   return {
     kind: "selected",
     selection: { ...selection, route: selectedRoute },

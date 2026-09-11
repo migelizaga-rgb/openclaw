@@ -17,6 +17,8 @@ import {
 } from "../model-auth.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { isOpenAIProvider } from "../openai-routing.js";
+import { getPreparedModelRuntimePreferredAuthSource } from "../prepared-model-runtime-auth.js";
+import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.types.js";
 import {
   providerUsesCredentialScopedModelMetadata,
   resolveReusableRuntimeModelAuth,
@@ -151,6 +153,7 @@ export function resolveCompactionRuntimeSelection(params: {
 
 /** Prepares one ordered auth-attempt set and converges it on a single compaction harness. */
 export async function prepareCompactionHarnessAuth(params: {
+  preparedModelRuntime?: PreparedModelRuntimeSnapshot;
   config?: OpenClawConfig;
   provider: string;
   metadataProvider?: string;
@@ -208,6 +211,11 @@ export async function prepareCompactionHarnessAuth(params: {
         ...harnessSelectionParams,
         modelProvider: projectPreparedModelProvider({ model: params.model }),
       });
+  const preferredAuthSource = getPreparedModelRuntimePreferredAuthSource(
+    params.preparedModelRuntime,
+    params.provider,
+    params.modelId,
+  );
   const prepare = (harness: AgentHarness) =>
     prepareAgentRuntimeAuth({
       provider: params.provider,
@@ -219,6 +227,10 @@ export async function prepareCompactionHarnessAuth(params: {
       agentDir: params.agentDir,
       workspaceDir: params.workspaceDir,
       authProfileStore: runtimeAuthProfileStore,
+      preferredDirectSource:
+        preferredAuthSource?.kind === "direct" ? preferredAuthSource : undefined,
+      preferredAuthProfileId:
+        preferredAuthSource?.kind === "profile" ? preferredAuthSource.profileId : undefined,
       sessionAuthProfileId: params.authProfileId,
       sessionAuthProfileSource: params.authProfileIdSource,
       harnessId: harness.id,

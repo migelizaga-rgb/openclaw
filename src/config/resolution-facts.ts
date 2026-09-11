@@ -1,3 +1,4 @@
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type { EnvSubstitutionWarning } from "./env-substitution.js";
 import type { OpenClawConfig } from "./types.openclaw.js";
 import { coerceSecretRef, DEFAULT_SECRET_PROVIDER_ALIAS, type SecretRef } from "./types.secrets.js";
@@ -84,6 +85,24 @@ export function getConfigProviderUseBindings(target: unknown): ConfigProviderUse
   return target && typeof target === "object"
     ? (providerUseBindingsByConfig.get(target) ?? {})
     : {};
+}
+
+/** Reloads preserve admitted upgrade bindings until an authored provider entry replaces them. */
+export function retainConfigProviderUseBindings(
+  previous: OpenClawConfig,
+  next: OpenClawConfig,
+): void {
+  const authoredProviders = new Set(
+    Object.keys(next.models?.providers ?? {}).map(normalizeProviderId),
+  );
+  setConfigProviderUseBindings(next, {
+    ...Object.fromEntries(
+      Object.entries(getConfigProviderUseBindings(previous)).filter(
+        ([provider]) => !authoredProviders.has(provider),
+      ),
+    ),
+    ...getConfigProviderUseBindings(next),
+  });
 }
 
 /** Only the shared migration can add runtime declarations to an authored auth view. */

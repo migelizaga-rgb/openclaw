@@ -101,7 +101,7 @@ beyond the grace period.
       alone never select a provider.
 
       Any saved account for the provider or its family, in any auth scope,
-      blocks a generated env binding. The notice names the provider and saved
+      blocks creation of a generated env binding. The notice names the provider and saved
       profiles so the operator can bind that account explicitly. A missing
       variable, account conflict, unreadable upgrade state, or unwritable config
       leaves completion open. Independent safe repairs can still proceed.
@@ -114,6 +114,11 @@ beyond the grace period.
       that file. Only successful Doctor persistence closes the upgrade.
       Later model selections need their own binding when their key is ambiguous
       or borrowed.
+
+      Saving an account after startup refreshes authentication without a restart.
+      A working in-memory binding remains in use; an authored provider entry
+      replaces it. Automatic routing can use a compatible saved profile when the
+      current credential becomes unavailable and reports that change once.
 
       An auth-only overlay is not a catalog override. Doctor does not recommend
       removing it to restore catalog defaults. The env overlay contains only

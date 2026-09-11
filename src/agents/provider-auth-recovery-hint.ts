@@ -10,7 +10,6 @@ import {
   resolveProviderAuthEnvVarCandidates,
   resolveProviderBindingEnvVarCandidates,
 } from "../secrets/provider-env-vars.js";
-import { resolveStartupProviderUseBindingConflict } from "./model-auth-runtime-config.js";
 import { normalizeProviderId } from "./model-selection.js";
 import { resolveProviderAuthAliasMap } from "./provider-auth-aliases.js";
 import { resolveProviderUseAdmission } from "./provider-model-auth-source-plan.js";
@@ -65,15 +64,6 @@ export function buildProviderAuthRecoveryHint(params: {
 }): string {
   const env = params.env ?? process.env;
   const provider = normalizeProviderId(params.provider);
-  const startupConflict = resolveStartupProviderUseBindingConflict({
-    provider,
-    cfg: params.config,
-    env,
-    workspaceDir: params.workspaceDir,
-  });
-  if (startupConflict) {
-    return startupConflict.message;
-  }
   const aliases = resolveProviderAuthAliasMap(params);
   const candidates = resolveProviderAuthEnvVarCandidates(params);
   const presentVariables = (

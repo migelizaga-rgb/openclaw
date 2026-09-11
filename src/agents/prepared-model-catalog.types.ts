@@ -4,8 +4,10 @@ import type { PluginRegistry } from "../plugins/registry-types.js";
 import type { PreparedAgentCredentialModes } from "./agent-auth-credential-modes.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
+import type { ProviderModelAuthSource } from "./provider-model-auth-source-plan.js";
 
 export type PublishedModelCatalogOwnerCandidate = Readonly<{
+  preferredAuthSource?: (provider: string, modelId: string) => ProviderModelAuthSource | undefined;
   /** Captured during preparation; undefined is a known-unbound runtime. */
   catalogOwner: Readonly<{ agentId: string; workspaceDir: string }> | undefined;
   agentId?: string;
@@ -24,6 +26,7 @@ export type PublishedModelCatalogOwnerCandidate = Readonly<{
 }>;
 
 export type ResolvedPublishedModelCatalogOwner = Readonly<{
+  preferredAuthSource?: (provider: string, modelId: string) => ProviderModelAuthSource | undefined;
   catalogOwner: NonNullable<PublishedModelCatalogOwnerCandidate["catalogOwner"]>;
   agentId: string;
   agentDir: string;

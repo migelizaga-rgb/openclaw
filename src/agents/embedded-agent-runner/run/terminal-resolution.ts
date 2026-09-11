@@ -28,8 +28,10 @@ import {
   shouldContinueInteractiveAcceptedSessionSpawns,
 } from "./attempt-terminal-evidence.js";
 import {
+  appendEmbeddedRunAuthSourceNotice,
   markEmbeddedRunAuthProfileSuccess,
   reportEmbeddedRunSuccessfulAuthBinding,
+  type PreparedEmbeddedRunAuthSource,
 } from "./auth-profile-success.js";
 import type { EmbeddedRunContextRecoveryState } from "./context-recovery-state.js";
 import { resolveFinalAssistantVisibleText } from "./helpers.js";
@@ -166,65 +168,67 @@ export function resolveSettledTurnFinalizationRequest(input: {
   });
 }
 
-export async function resolveEmbeddedRunTerminal(input: {
-  runParams: TerminalRunParams;
-  retryState: EmbeddedRunTerminalRetryState;
-  attempt: EmbeddedRunAttemptResult;
-  attemptAssistant?: AssistantMessage;
-  activeErrorContext: { provider: string; model: string };
-  modelApi: Parameters<typeof resolveReasoningOnlyRetryInstruction>[0]["modelApi"];
-  executionContract: Parameters<
-    typeof resolveReasoningOnlyRetryInstruction
-  >[0]["executionContract"];
-  terminalState: EmbeddedRunTerminalState;
-  payloadsWithToolMedia: EmbeddedAgentRunResult["payloads"];
-  recoveredFinalAssistantPayloadsAfterPromptTimeout?: EmbeddedAgentRunResult["payloads"];
-  finalAssistantVisibleText?: string;
-  finalAssistantRawText?: string;
-  agentMeta: EmbeddedAgentMeta;
-  attemptToolSummary: EmbeddedAgentRunResult["meta"]["toolSummary"];
-  failureSignal?: EmbeddedRunFailureSignal;
-  terminalToolFailure?: EmbeddedAgentRunResult["meta"]["terminalToolFailure"];
-  maxReasoningOnlyRetryAttempts: number;
-  maxEmptyResponseRetryAttempts: number;
-  attemptCompactionCount: number;
-  replayState: EmbeddedRunReplayState;
-  activePromptPersisted: boolean;
-  activateInternalPrompt: (prompt: string) => void;
-  activateCompactionContinuation: (instruction: string) => void;
-  clearCompactionContinuation: () => void;
-  setSuppressNextUserMessagePersistence: (value: boolean) => void;
-  armPostCompactionGuard: () => void;
-  readTerminalToolPresentation: () => string | undefined;
-  resolveReplayInvalid: (incompleteTurnText?: string | null) => boolean;
-  setTerminalLifecycleMeta: NonNullable<EmbeddedRunAttemptResult["setTerminalLifecycleMeta"]>;
-  maybeMarkAuthProfileFailure: (failure: {
-    profileId?: string;
-    reason?: AuthProfileFailureReason | null;
-    modelId?: string;
-  }) => Promise<void>;
-  assistantProfileFailureReason?: AuthProfileFailureReason | null;
-  startedAtMs: number;
-  provider: string;
-  modelId: string;
-  modelTransportId: string;
-  modelTransportApi: string;
-  modelTransportBaseUrl?: string;
-  requestTransportOverrides?: ProviderRouteOverridePresence;
-  authProfileId?: string;
-  profileFailureStore: AuthProfileStore;
-  attemptAuthProfileStore: AuthProfileStore;
-  apiKeyInfo: ResolvedProviderAuth | null;
-  agentHarnessId: string;
-  settledTurnFinalizationOutcome: "not-attempted" | "answered" | "completed-empty" | "failed";
-  pluginHarnessOwnsTransport: boolean;
-  pluginHarnessOwnsAuthBootstrap: boolean;
-  reportedModelRef: { provider: string; model: string };
-  traceAttempts: TraceAttempt[];
-  traceAttemptUsesFallback: (attempt: TraceAttempt) => boolean;
-  thinkLevel?: string;
-  contextRecoveryState: EmbeddedRunContextRecoveryState;
-}): Promise<TerminalResolution> {
+export async function resolveEmbeddedRunTerminal(
+  input: PreparedEmbeddedRunAuthSource & {
+    runParams: TerminalRunParams;
+    retryState: EmbeddedRunTerminalRetryState;
+    attempt: EmbeddedRunAttemptResult;
+    attemptAssistant?: AssistantMessage;
+    activeErrorContext: { provider: string; model: string };
+    modelApi: Parameters<typeof resolveReasoningOnlyRetryInstruction>[0]["modelApi"];
+    executionContract: Parameters<
+      typeof resolveReasoningOnlyRetryInstruction
+    >[0]["executionContract"];
+    terminalState: EmbeddedRunTerminalState;
+    payloadsWithToolMedia: EmbeddedAgentRunResult["payloads"];
+    recoveredFinalAssistantPayloadsAfterPromptTimeout?: EmbeddedAgentRunResult["payloads"];
+    finalAssistantVisibleText?: string;
+    finalAssistantRawText?: string;
+    agentMeta: EmbeddedAgentMeta;
+    attemptToolSummary: EmbeddedAgentRunResult["meta"]["toolSummary"];
+    failureSignal?: EmbeddedRunFailureSignal;
+    terminalToolFailure?: EmbeddedAgentRunResult["meta"]["terminalToolFailure"];
+    maxReasoningOnlyRetryAttempts: number;
+    maxEmptyResponseRetryAttempts: number;
+    attemptCompactionCount: number;
+    replayState: EmbeddedRunReplayState;
+    activePromptPersisted: boolean;
+    activateInternalPrompt: (prompt: string) => void;
+    activateCompactionContinuation: (instruction: string) => void;
+    clearCompactionContinuation: () => void;
+    setSuppressNextUserMessagePersistence: (value: boolean) => void;
+    armPostCompactionGuard: () => void;
+    readTerminalToolPresentation: () => string | undefined;
+    resolveReplayInvalid: (incompleteTurnText?: string | null) => boolean;
+    setTerminalLifecycleMeta: NonNullable<EmbeddedRunAttemptResult["setTerminalLifecycleMeta"]>;
+    maybeMarkAuthProfileFailure: (failure: {
+      profileId?: string;
+      reason?: AuthProfileFailureReason | null;
+      modelId?: string;
+    }) => Promise<void>;
+    assistantProfileFailureReason?: AuthProfileFailureReason | null;
+    startedAtMs: number;
+    provider: string;
+    modelId: string;
+    modelTransportId: string;
+    modelTransportApi: string;
+    modelTransportBaseUrl?: string;
+    requestTransportOverrides?: ProviderRouteOverridePresence;
+    authProfileId?: string;
+    profileFailureStore: AuthProfileStore;
+    attemptAuthProfileStore: AuthProfileStore;
+    apiKeyInfo: ResolvedProviderAuth | null;
+    agentHarnessId: string;
+    settledTurnFinalizationOutcome: "not-attempted" | "answered" | "completed-empty" | "failed";
+    pluginHarnessOwnsTransport: boolean;
+    pluginHarnessOwnsAuthBootstrap: boolean;
+    reportedModelRef: { provider: string; model: string };
+    traceAttempts: TraceAttempt[];
+    traceAttemptUsesFallback: (attempt: TraceAttempt) => boolean;
+    thinkLevel?: string;
+    contextRecoveryState: EmbeddedRunContextRecoveryState;
+  },
+): Promise<TerminalResolution> {
   const { runParams, attempt, retryState } = input;
   const { externalAbort, promptError } = projectAgentRunAttemptTerminal(attempt.terminal);
   const terminalAborted = isEmbeddedRunTerminalAbort(input.terminalState.outcome);
@@ -524,6 +528,7 @@ async function completeEmbeddedRun(
       : input.attempt.yieldDetected
         ? "end_turn"
         : (input.attemptAssistant?.stopReason as string | undefined);
+  let authSourceChangeNotice: string | undefined;
   if (error) {
     input.setTerminalLifecycleMeta({ replayInvalid, livenessState });
     if (input.authProfileId) {
@@ -552,7 +557,15 @@ async function completeEmbeddedRun(
       runId: input.runParams.runId,
       sessionId: input.runParams.sessionId,
     });
-    reportEmbeddedRunSuccessfulAuthBinding({
+    authSourceChangeNotice = reportEmbeddedRunSuccessfulAuthBinding({
+      preparedModelRuntime: input.preparedModelRuntime,
+      preparedModelId: input.modelId,
+      preparedAuthPlan: input.preparedAuthPlan,
+      noticeContext: {
+        runParams: input.runParams,
+        interrupted: terminalAborted || terminalTimedOut,
+        silent: Boolean(input.emptyAssistantReplyIsSilent || input.intentionalTerminalCompletion),
+      },
       profileId: input.authProfileId,
       profileStore: input.attemptAuthProfileStore,
       apiKeyInfo: input.apiKeyInfo,
@@ -629,7 +642,7 @@ async function completeEmbeddedRun(
   return {
     action: "complete",
     result: {
-      payloads: terminalPayloads?.length ? terminalPayloads : undefined,
+      payloads: appendEmbeddedRunAuthSourceNotice(terminalPayloads, authSourceChangeNotice),
       ...(!error && input.attempt.diagnosticTrace
         ? { diagnosticTrace: freezeDiagnosticTraceContext(input.attempt.diagnosticTrace) }
         : {}),

@@ -17,6 +17,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   bindModelLlmRuntime,
   getModelCompletionOwner,
+  getModelCompletionSuccess,
   getModelCompletionTransport,
   getModelLlmRuntime,
 } from "../llm/model-runtime-binding.js";
@@ -93,12 +94,17 @@ async function completePreparedModel(params: PreparedCompletionParams): Promise<
   if (strictReasoningTags) {
     reasoningTagTextPolicy.markStrict(completionOptions);
   }
-  return await completeSimple(
+  const result = await completeSimple(
     completionModel,
     params.context,
     completionOptions,
     params.assertCurrent,
   );
+  if (result.stopReason !== "error" && result.stopReason !== "aborted") {
+    params.assertCurrent?.();
+    getModelCompletionSuccess(params.model)?.();
+  }
+  return result;
 }
 
 function normalizeSimpleCompletionReasoning(

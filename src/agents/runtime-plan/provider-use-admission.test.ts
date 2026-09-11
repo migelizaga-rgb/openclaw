@@ -39,22 +39,115 @@ const byteplusMetadataSnapshot = createPluginMetadataSnapshotFixture({
 });
 
 describe("resolveProviderUseAdmission", () => {
+  it.each(["working", "missing", "pinned", "ordered", "retained-profile"] as const)(
+    "routes a generated credential and saved account when the current source is %s",
+    async (condition) => {
+      await withOpenClawTestState(
+        {
+          layout: "home",
+          prefix: "generated-source-fallback-",
+          env: { BYTEPLUS_API_KEY: condition === "missing" ? undefined : "environment-account" },
+        },
+        async (state) => {
+          const profileId = "byteplus-plan:saved";
+          const source: OpenClawConfig =
+            condition === "ordered" ? { auth: { order: { "byteplus-plan": [profileId] } } } : {};
+          setConfigProviderUseBindings(source, {
+            "byteplus-plan": {
+              apiKey: { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
+            },
+          });
+          const config = resolveConfigProviderUseBindings(source);
+          const store: AuthProfileStore = {
+            version: 1,
+            profiles: {
+              [profileId]: { type: "api_key", provider: "byteplus-plan", key: "saved-account" },
+            },
+          };
+          const model: Model = {
+            provider: "byteplus-plan",
+            id: "fixture",
+            name: "Fixture",
+            api: "openai-completions",
+            baseUrl: "https://fixture.invalid/v1",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 4096,
+            maxTokens: 1024,
+          };
+          await withPluginMetadataSnapshotScope(
+            byteplusMetadataSnapshot,
+            async () => {
+              const prepared = prepareAgentRuntimeAuth({
+                provider: model.provider,
+                modelId: model.id,
+                modelApi: model.api,
+                config,
+                env: state.env,
+                authProfileStore: store,
+                agentDir: state.agentDir(),
+                metadataSnapshot: byteplusMetadataSnapshot,
+                ...(condition === "retained-profile" ? { preferredAuthProfileId: profileId } : {}),
+                ...(condition === "pinned"
+                  ? {
+                      sessionAuthProfileId: profileId,
+                      sessionAuthProfileSource: "user" as const,
+                      allowAuthProfileFallback: false,
+                    }
+                  : {}),
+              });
+              expect(prepared.attempts.map((attempt) => attempt.kind)).toEqual(
+                condition === "working"
+                  ? ["direct", "profile"]
+                  : condition === "retained-profile"
+                    ? ["profile", "direct"]
+                    : ["profile"],
+              );
+              expect(prepared.plan.retainAutomaticAuthSource).toBe(
+                condition === "pinned" || condition === "ordered" ? undefined : true,
+              );
+              const resolved = await resolvePreparedRuntimeModelAuth({
+                plan: prepared.plan,
+                cfg: config,
+                model,
+                store,
+                agentDir: state.agentDir(),
+              });
+              expect(resolved.auth.apiKey).toBe(
+                condition === "working" ? "environment-account" : "saved-account",
+              );
+              expect(resolved.auth.profileId).toBe(condition === "working" ? undefined : profileId);
+            },
+            { config, env: state.env },
+          );
+        },
+      );
+    },
+  );
+
   it.each([
     ["amazon-bedrock", "amazon-bedrock-mantle"],
     ["amazon-bedrock-mantle", "amazon-bedrock"],
     ["fixture-target", "fixture-rival-alias"],
   ])(
-    "rejects a generated %s binding after saved family account %s appears",
+    "retains a generated %s source after saved family account %s appears",
     async (provider, storedProvider) => {
       await withOpenClawTestState(
         {
           layout: "home",
           prefix: "startup-binding-family-",
-          env: { SHARED_KEY: "environment-account" },
+          env: { SHARED_KEY: "environment-account", AWS_PROFILE: "fixture" },
         },
         async (state) => {
           const metadataSnapshot = createPluginMetadataSnapshotFixture({
             plugins: [
+              {
+                id: "amazon-bedrock",
+                providers: ["amazon-bedrock", "amazon-bedrock-mantle"],
+                providerAuthAliases: { "amazon-bedrock-mantle": "amazon-bedrock" },
+                setup: { providers: [{ id: "amazon-bedrock", envVars: ["AWS_PROFILE"] }] },
+              },
               {
                 id: "target",
                 providers: ["fixture-target"],
@@ -87,16 +180,17 @@ describe("resolveProviderUseAdmission", () => {
           await withPluginMetadataSnapshotScope(
             metadataSnapshot,
             async () => {
-              expect(() =>
-                prepareAgentRuntimeAuth({
-                  provider,
-                  modelId: "fixture",
-                  config,
-                  env: state.env,
-                  authProfileStore: store,
-                  metadataSnapshot,
-                }),
-              ).toThrow(`conflicts with saved profile "${profileId}"`);
+              const prepared = prepareAgentRuntimeAuth({
+                provider,
+                modelId: "fixture",
+                config,
+                env: state.env,
+                authProfileStore: store,
+                metadataSnapshot,
+              });
+              expect(prepared.plan.credentialSource).toMatchObject({ kind: "direct" });
+              expect(prepared.plan.forwardedAuthProfileId).toBeUndefined();
+              expect(prepared.attempts[0]?.kind).toBe("direct");
               expect(
                 createModelAuthAvailabilityResolver({
                   cfg: config,
@@ -104,7 +198,7 @@ describe("resolveProviderUseAdmission", () => {
                   env: state.env,
                   metadataSnapshot,
                 }).evaluateProviderAuth(provider).availability,
-              ).toBe(false);
+              ).not.toBe(false);
             },
             { config },
           );
@@ -123,7 +217,7 @@ describe("resolveProviderUseAdmission", () => {
     "during-resolution",
     "runtime-only",
   ] as const)(
-    "keeps startup binding authority current when a saved account is %s",
+    "keeps the current startup credential when a saved account is %s",
     async (selection) => {
       await withOpenClawTestState(
         {
@@ -220,7 +314,6 @@ describe("resolveProviderUseAdmission", () => {
                   },
                   selection === "family-other" ? "other" : "main",
                 );
-              const message = `Startup provider binding for "byteplus-plan" conflicts with saved profile "${profileId}"`;
               if (selection === "runtime-only") {
                 store.profiles[profileId] = {
                   type: "api_key",
@@ -230,15 +323,12 @@ describe("resolveProviderUseAdmission", () => {
                 store.runtimePersistedProfileIds = [];
                 setRuntimeAuthProfileStoreSnapshot(store, state.agentDir());
               } else if (selection === "during-resolution") {
-                const rejected = expect(resolve()).rejects.toThrow(message);
+                const resolving = resolve();
                 await saveAccount();
-                await rejected;
+                expect((await resolving).auth.apiKey).toBe("environment-account");
               } else if (selection !== "unchanged") {
                 await saveAccount();
               }
-              const blocked = !["unchanged", "unrelated", "authored", "runtime-only"].includes(
-                selection,
-              );
               const evaluation = createModelAuthAvailabilityResolver({
                 cfg: config,
                 authStore: store,
@@ -246,23 +336,24 @@ describe("resolveProviderUseAdmission", () => {
                 agentDir: state.agentDir(),
                 metadataSnapshot: byteplusMetadataSnapshot,
               }).evaluateModelAuth(model.provider);
-              expect(evaluation.availability).toBe(!blocked);
-              if (blocked) {
-                expect(prepare).toThrow(message);
-                await expect(resolve()).rejects.toThrow(message);
-                await expect(
-                  getApiKeyForModelCore({ cfg: config, model, store, agentDir: state.agentDir() }),
-                ).rejects.toThrow(message);
-                expect(
-                  buildProviderAuthRecoveryHint({
-                    provider: model.provider,
-                    config,
-                    env: state.env,
-                  }),
-                ).toContain(profileId);
-              } else {
-                expect((await resolve()).auth.apiKey).toBe("environment-account");
-              }
+              expect(evaluation.availability).toBe(true);
+              expect(prepare().plan.forwardedAuthProfileId).toBeUndefined();
+              expect((await resolve()).auth.apiKey).toBe("environment-account");
+              expect(
+                (
+                  await getApiKeyForModelCore({
+                    cfg: config,
+                    model,
+                    store,
+                    agentDir: state.agentDir(),
+                    boundEnvVar: prepared.plan.boundEnvVar,
+                    allowAuthProfileFallback: false,
+                  })
+                ).apiKey,
+              ).toBe("environment-account");
+              expect(
+                buildProviderAuthRecoveryHint({ provider: model.provider, config, env: state.env }),
+              ).not.toContain("conflicts with saved profile");
               expect(JSON.stringify(source)).toBe(authoredSource);
             },
             { config },
@@ -395,7 +486,7 @@ describe("resolveProviderUseAdmission", () => {
           metadataSnapshot: byteplusMetadataSnapshot,
         }),
       ).toThrow(
-        state === "expired" ? "No usable bound auth profile" : "not configured for model use",
+        state === "expired" ? '"byteplus:saved" (expired)' : "not configured for model use",
       );
     },
   );

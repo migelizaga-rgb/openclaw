@@ -94,6 +94,22 @@ import {
   resolveSimpleCompletionSelectionForAgent,
 } from "./simple-completion-runtime.js";
 
+const completionConfig: OpenClawConfig = {
+  models: {
+    providers: Object.fromEntries(
+      [
+        "anthropic",
+        "github-copilot",
+        "local-openai",
+        "amazon-bedrock",
+        "amazon-bedrock-mantle",
+        "ollama",
+        "mistral",
+      ].map((provider) => [provider, { baseUrl: "", models: [] }]),
+    ),
+  },
+};
+
 let preparedModelRuntime: PreparedModelRuntimeSnapshot;
 
 beforeEach(() => {
@@ -231,7 +247,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "anthropic",
       modelId: "claude-opus-4-6",
       agentDir: "/tmp/openclaw-agent",
@@ -353,7 +369,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "anthropic",
       modelId: "missing-model",
     });
@@ -372,7 +388,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "anthropic",
       modelId: "claude-opus-4-6",
     });
@@ -407,7 +423,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "amazon-bedrock",
       modelId: "anthropic.claude-sonnet-4-6",
       allowMissingApiKeyModes: ["aws-sdk"],
@@ -443,7 +459,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "github-copilot",
       modelId: "gpt-4.1",
     });
@@ -486,7 +502,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "github-copilot",
       modelId: "gpt-4.1",
     });
@@ -521,7 +537,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "github-copilot",
       modelId: "gpt-4.1",
     });
@@ -559,7 +575,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "github-copilot",
       modelId: "gpt-4.1",
     });
@@ -576,7 +592,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "anthropic",
       modelId: "claude-opus-4-6",
     });
@@ -613,7 +629,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "local-openai",
       modelId: "chat-local",
     });
@@ -651,6 +667,16 @@ describe("prepareSimpleCompletionModel", () => {
       },
       modelRegistry: {},
     });
+    hoisted.ensureAuthProfileStoreMock.mockReturnValueOnce({
+      version: 1,
+      profiles: {
+        mantle: {
+          type: "api_key",
+          provider: "amazon-bedrock-mantle",
+          key: "__amazon_bedrock_mantle_iam__",
+        },
+      },
+    });
     hoisted.getApiKeyForModelMock.mockResolvedValueOnce({
       apiKey: "__amazon_bedrock_mantle_iam__",
       source: "models.providers.amazon-bedrock-mantle.apiKey",
@@ -664,7 +690,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "amazon-bedrock-mantle",
       modelId: "anthropic.claude-opus-4-7",
       agentDir: "/tmp/openclaw-agent",
@@ -720,7 +746,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "ollama",
       modelId: "llama3.2:latest",
       skipAgentDiscovery: true,
@@ -733,7 +759,7 @@ describe("prepareSimpleCompletionModel", () => {
       "ollama",
       "llama3.2:latest",
       "/tmp/openclaw-agent",
-      undefined,
+      completionConfig,
       expect.objectContaining({
         skipAgentDiscovery: true,
         workspaceDir: "/tmp/runtime-workspace",
@@ -763,7 +789,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "anthropic",
       modelId: "claude-opus-4-6",
       modelResolver: resolveModelAsync,
@@ -775,7 +801,7 @@ describe("prepareSimpleCompletionModel", () => {
       "anthropic",
       "claude-opus-4-6",
       "/tmp/openclaw-agent",
-      undefined,
+      completionConfig,
       expect.objectContaining({
         workspaceDir: "/tmp/runtime-workspace",
         preparedModelRuntime: expect.anything(),
@@ -798,7 +824,7 @@ describe("prepareSimpleCompletionModel", () => {
 
     const result = await prepareSimpleCompletionModel({
       preparedModelRuntime,
-      cfg: undefined,
+      cfg: completionConfig,
       provider: "mistral",
       modelId: "mistral-medium-3-5",
       allowBundledStaticCatalogFallback: true,
@@ -811,7 +837,7 @@ describe("prepareSimpleCompletionModel", () => {
       "mistral",
       "mistral-medium-3-5",
       "/tmp/openclaw-agent",
-      undefined,
+      completionConfig,
       expect.objectContaining({
         allowBundledStaticCatalogFallback: true,
         skipAgentDiscovery: true,
@@ -877,6 +903,12 @@ describe("acquireSimpleCompletionModelForAgent", () => {
       api: "openai-chatgpt-responses",
       baseUrl: "https://chatgpt.com/backend-api/codex",
     });
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      version: 1,
+      profiles: {
+        "openai:platform": { type: "api_key", provider: "openai", key: "placeholder" },
+      },
+    });
     hoisted.getApiKeyForModelMock.mockResolvedValue({
       apiKey: "placeholder",
       profileId: "openai:platform",
@@ -903,7 +935,7 @@ describe("acquireSimpleCompletionModelForAgent", () => {
       });
       expect(modelResolver).toHaveBeenCalledTimes(2);
       expect(
-        (callArg(hoisted.getApiKeyForModelMock, 1) as { model?: { api?: string } }).model?.api,
+        (callArg(hoisted.getApiKeyForModelMock) as { model?: { api?: string } }).model?.api,
       ).toBe("openai-responses");
       // Route materialization re-resolves the model on a multi-agent config; both
       // calls must keep the authorized agentId or the second falls back to
@@ -924,6 +956,18 @@ describe("acquireSimpleCompletionModelForAgent", () => {
     const modelResolver = createOpenAIRouteModelResolver({
       api: "openai-chatgpt-responses",
       baseUrl: "https://chatgpt.com/backend-api/codex",
+    });
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      version: 1,
+      profiles: {
+        "openai:chatgpt": {
+          type: "oauth",
+          provider: "openai",
+          access: "placeholder",
+          refresh: "refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
     });
     hoisted.getApiKeyForModelMock.mockResolvedValue({
       apiKey: "placeholder",
@@ -948,7 +992,7 @@ describe("acquireSimpleCompletionModelForAgent", () => {
         baseUrl: "https://chatgpt.com/backend-api/codex",
       });
       expect(modelResolver).toHaveBeenCalledTimes(1);
-      expect(hoisted.getApiKeyForModelMock).toHaveBeenCalledTimes(2);
+      expect(hoisted.getApiKeyForModelMock).toHaveBeenCalledTimes(1);
     } finally {
       if (!("error" in result)) {
         await result[Symbol.asyncDispose]();
@@ -963,6 +1007,7 @@ describe("acquireSimpleCompletionModelForAgent", () => {
           openai: {
             api: "openai-responses",
             baseUrl: "https://relay.example/v1",
+            apiKey: "placeholder",
             models: [{ id: "gpt-5.5" }],
           },
         },
@@ -1003,6 +1048,7 @@ describe("acquireSimpleCompletionModelForAgent", () => {
   it("honors an explicit model ref while selecting its auth-compatible route", async () => {
     const cfg = {
       agents: { defaults: { model: "anthropic/claude-opus-4-6" } },
+      models: { providers: { openai: { apiKey: "placeholder", baseUrl: "", models: [] } } },
     } as unknown as OpenClawConfig;
     const modelResolver = createOpenAIRouteModelResolver({
       api: "openai-chatgpt-responses",

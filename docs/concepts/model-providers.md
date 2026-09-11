@@ -52,6 +52,12 @@ cover an expired or otherwise unusable saved account. An explicit profile pin
 does not switch accounts this way. An ambiguous or borrowed key is not an
 independently bound fallback.
 
+Saving an account while the Gateway runs makes it available without a restart.
+Automatic routes keep their current credential while it works. If that credential
+becomes unavailable, a compatible saved account can serve the route. The next
+visible reply names the provider and profile once. Selecting or activating an
+account explicitly still takes precedence over an automatic choice.
+
 If a key is present but its model provider is reported as unbound, setting the
 same variable again will not repair the binding. Use `openclaw doctor --fix` for
 an eligible existing selection, or add an explicit provider entry.
@@ -71,8 +77,12 @@ To persist these upgrades, run `openclaw doctor --fix`. Doctor records completio
 after a successful write. It writes a credential-only env SecretRef for an
 eligible shared-key selection, or a minimal provider declaration for a selected
 cloud credential-chain route. Any saved account for that provider or its family,
-in shared or agent-local storage, blocks a generated env binding. Notices name
+in shared or agent-local storage, blocks creation of a generated env binding. Notices name
 providers, variables, and conflicting profiles, never credential values.
+
+A binding already admitted at startup remains available to that running Gateway
+through config reloads. An authored provider entry replaces it. Changing a model
+default does not revoke that binding or silently replace its working account.
 
 If Doctor cannot see a required variable or cannot write managed config, it
 leaves the upgrade open. Run it from the service environment, or add the reported

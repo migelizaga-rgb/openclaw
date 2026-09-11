@@ -9,7 +9,11 @@ import {
   setRuntimeConfigSnapshot,
 } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { buildOpenAICompatibleProviderFamilyCatalog } from "../../plugin-sdk/provider-catalog-live-runtime.js";
+import {
+  buildOpenAICompatibleProviderFamilyCatalog,
+  buildOpenAICompatibleLiveModelProviderConfig,
+  clearLiveCatalogCacheForTests,
+} from "../../plugin-sdk/provider-catalog-live-runtime.js";
 import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import type { ProviderPlugin } from "../../plugins/types.js";
@@ -17,12 +21,7 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
-import {
-  captureRuntimeAuthProfileAccountIdentities,
-  replaceRuntimeAuthProfileStoreSnapshots,
-  setRuntimeAuthProfileStoreSnapshot,
-  withRuntimeAuthProfileAccountIdentities,
-} from "../auth-profiles/runtime-snapshots.js";
+import { setRuntimeAuthProfileStoreSnapshot } from "../auth-profiles/runtime-snapshots.js";
 import { ensureAuthProfileStore } from "../auth-profiles/store-runtime.js";
 import { MODELS_CONFIG_IMPLICIT_ENV_VARS } from "../models-config.e2e-harness.js";
 import { planOpenClawModelsJsonSource } from "../models-config.js";
@@ -72,6 +71,7 @@ function createTextModel(id: string, name: string) {
 describe("catalog destination credential admission", () => {
   let state: OpenClawTestState;
   beforeEach(async () => {
+    clearLiveCatalogCacheForTests();
     vi.clearAllMocks();
     mocks.runProviderCatalog.mockReset();
     mocks.runProviderStaticCatalog.mockReset();
@@ -88,7 +88,7 @@ describe("catalog destination credential admission", () => {
     clearRuntimeConfigSnapshot();
     await state.cleanup();
   });
-  it("revokes earlier provisional output after a later order saves an account while retaining authored and static rows", async () => {
+  it("retains current catalog output after a later order saves an account", async () => {
     const first = "fixture-first",
       last = "fixture-last",
       publicId = "fixture-static";
@@ -174,12 +174,12 @@ describe("catalog destination credential admission", () => {
         }),
       { config, env },
     );
-    expect(result?.[first]).toBeUndefined();
+    expect(result?.[first]?.models.map((model) => model.id)).toEqual([first]);
     expect(result?.[last]?.models.map((model) => model.id)).toEqual([last]);
     expect(result?.[publicId]?.models.map((model) => model.id)).toEqual(["public-model"]);
     expect(outcomes).toEqual([
+      { provider: first, status: "ready" },
       { provider: last, status: "ready" },
-      { provider: first, status: "unavailable" },
     ]);
   });
 
@@ -189,7 +189,7 @@ describe("catalog destination credential admission", () => {
     "runtime source projection",
     "isolated other-agent",
   ] as const)(
-    "does not refresh an authenticated startup catalog after a saved account conflicts through %s",
+    "refreshes the current authenticated startup catalog after an account is saved through %s",
     async (entryPoint) => {
       const provider = "fixture-startup";
       const env = { ...state.env, FIXTURE_API_KEY: "environment-account" };
@@ -220,18 +220,32 @@ describe("catalog destination credential admission", () => {
       mocks.resolveRuntimePluginDiscoveryProviders.mockResolvedValue([
         { ...createProvider(provider), pluginId: "fixture-startup-plugin" },
       ]);
-      mocks.runProviderCatalog.mockImplementation((params) => {
-        expect(params.resolveProviderApiKey(provider).discoveryApiKey).toBe("environment-account");
-        params.reportCatalogOutcome?.({ provider, status: "ready" });
-        return {
-          providers: {
-            [provider]: {
-              baseUrl: "https://fixture.invalid/v1",
-              api: "openai-completions",
-              models: [createTextModel("live-startup-model", "Fixture")],
-            },
+      const discoveryHeaders: Array<string | null> = [];
+      mocks.runProviderCatalog.mockImplementation(async (params) => {
+        const auth = params.resolveProviderApiKey(provider);
+        expect(auth.apiKey).toBe("FIXTURE_API_KEY");
+        expect(auth.discoveryApiKey).toBe("environment-account");
+        const discovered = await buildOpenAICompatibleLiveModelProviderConfig({
+          providerId: provider,
+          providerConfig: {
+            baseUrl: "https://fixture.invalid/v1",
+            api: "openai-completions",
+            models: [createTextModel("live-startup-model", "Fixture")],
           },
-        };
+          apiKey: auth.apiKey,
+          discoveryApiKey: auth.discoveryApiKey,
+          modelDiscovery: { ttlMs: 0 },
+          fetchGuard: async ({ init }) => {
+            discoveryHeaders.push(new Headers(init?.headers).get("authorization"));
+            return {
+              response: new Response(JSON.stringify({ data: [{ id: "live-startup-model" }] })),
+              finalUrl: "https://fixture.invalid/v1/models",
+              release: async () => undefined,
+            };
+          },
+        });
+        params.reportCatalogOutcome?.({ provider, status: "ready" });
+        return { providers: { [provider]: discovered } };
       });
       if (entryPoint === "runtime source projection" || isolated) {
         setRuntimeConfigSnapshot(config, source);
@@ -282,29 +296,22 @@ describe("catalog destination credential admission", () => {
         },
         isolated ? "other" : "main",
       );
-      expect(() => retained.resolveProviderApiKey(provider)).toThrow(
-        "conflicts with saved profile",
-      );
-      expect(() => retained.resolveProviderAuth(provider)).toThrow("conflicts with saved profile");
+      expect(retained.resolveProviderApiKey(provider).discoveryApiKey).toBe("environment-account");
+      expect(retained.resolveProviderAuth(provider)).toMatchObject({
+        apiKey: "FIXTURE_API_KEY",
+        discoveryApiKey: "environment-account",
+      });
       mocks.runProviderCatalog.mockClear();
       outcomes.length = 0;
-      const accounts = captureRuntimeAuthProfileAccountIdentities(env);
+      const refreshed = await discover();
+      expect(JSON.stringify(refreshed)).toContain("live-startup-model");
+      expect(mocks.runProviderCatalog).toHaveBeenCalledOnce();
+      expect(outcomes).toEqual([{ provider, status: "ready" }]);
+      expect(discoveryHeaders).toEqual([
+        "Bearer environment-account",
+        "Bearer environment-account",
+      ]);
       if (isolated) {
-        expect(accounts.profiles).toEqual([{ profileId: "fixture-startup:late", provider }]);
-        replaceRuntimeAuthProfileStoreSnapshots([{ agentDir: state.agentDir(), store }]);
-        expect(captureRuntimeAuthProfileAccountIdentities(env).profiles).toEqual([]);
-      }
-      const refreshed = await withRuntimeAuthProfileAccountIdentities(
-        isolated ? structuredClone(accounts) : undefined,
-        discover,
-      );
-      if (entryPoint === "implicit") {
-        expect(refreshed).toEqual({});
-      }
-      expect(mocks.runProviderCatalog).not.toHaveBeenCalled();
-      expect(outcomes).toEqual([{ provider, status: "unavailable" }]);
-      if (isolated) {
-        expect(captureRuntimeAuthProfileAccountIdentities(env).profiles).toEqual([]);
         expect(store.profiles).toEqual({});
       }
       expect(source).toEqual({});
@@ -314,7 +321,7 @@ describe("catalog destination credential admission", () => {
     { sibling: "none", configured: true },
     { sibling: "environment", configured: true },
     { sibling: "profile", configured: true },
-    { sibling: "startup-conflict", configured: true },
+    { sibling: "startup-binding", configured: true },
     { sibling: "environment", configured: false },
   ])(
     "keeps SDK donor auth destination-specific (sibling: $sibling, configured: $configured)",
@@ -345,7 +352,17 @@ describe("catalog destination credential admission", () => {
           ...family,
         },
       ]);
-      mocks.runProviderCatalog.mockImplementation((params) => family.catalog.run(params));
+      const donorReads: Array<{ provider: string; donor?: string; own?: string }> = [];
+      mocks.runProviderCatalog.mockImplementation((params) => {
+        for (const provider of params.providerIds) {
+          donorReads.push({
+            provider,
+            donor: params.resolveProviderApiKey("fixture-donor").discoveryApiKey,
+            own: params.resolveProviderApiKey(provider).discoveryApiKey,
+          });
+        }
+        return family.catalog.run(params);
+      });
       mocks.runProviderStaticCatalog.mockResolvedValue({ providers: {} });
       const metadata = createPluginMetadataSnapshotFixture({
         plugins: [
@@ -359,7 +376,7 @@ describe("catalog destination credential admission", () => {
       const sourceConfig: OpenClawConfig = {
         models: {
           providers: {
-            ...(sibling === "startup-conflict"
+            ...(sibling === "startup-binding"
               ? {}
               : {
                   "fixture-donor": {
@@ -372,7 +389,7 @@ describe("catalog destination credential admission", () => {
           },
         },
       };
-      if (sibling === "startup-conflict") {
+      if (sibling === "startup-binding") {
         setConfigProviderUseBindings(sourceConfig, {
           "fixture-donor": {
             apiKey: { source: "env", provider: "default", id: "FIXTURE_DONOR_KEY" },
@@ -387,24 +404,24 @@ describe("catalog destination credential admission", () => {
         env: {
           ...state.env,
           ...(sibling === "environment" ? { FIXTURE_SIBLING_KEY: "sibling-key" } : {}),
-          ...(sibling === "startup-conflict"
+          ...(sibling === "startup-binding"
             ? { FIXTURE_DONOR_KEY: "donor-key", FIXTURE_SIBLING_KEY: "sibling-key" }
             : {}),
         },
         authStore: {
           version: 1,
-          ...(sibling === "startup-conflict"
+          ...(sibling === "startup-binding"
             ? { runtimePersistedProfileIds: ["fixture-sibling:saved", "fixture-donor:saved"] }
             : {}),
           profiles:
-            sibling === "profile" || sibling === "startup-conflict"
+            sibling === "profile" || sibling === "startup-binding"
               ? {
                   "fixture-sibling:saved": {
                     type: "api_key",
                     provider: "fixture-sibling",
                     key: "saved-key",
                   },
-                  ...(sibling === "startup-conflict"
+                  ...(sibling === "startup-binding"
                     ? {
                         "fixture-donor:saved": {
                           type: "api_key" as const,
@@ -424,6 +441,20 @@ describe("catalog destination credential admission", () => {
         configured ? ["fixture-live"] : undefined,
       );
       expect(result?.["fixture-sibling"]).toBeUndefined();
+      if (configured) {
+        expect(donorReads).toContainEqual({
+          provider: "fixture-configured",
+          donor: "donor-key",
+          own: undefined,
+        });
+      }
+      if (sibling !== "none") {
+        expect(donorReads).toContainEqual({
+          provider: "fixture-sibling",
+          donor: undefined,
+          own: sibling === "profile" ? "saved-key" : "sibling-key",
+        });
+      }
     },
   );
 

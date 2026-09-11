@@ -15,7 +15,6 @@ import {
   revokeRuntimeAuthMaterializations,
 } from "./runtime-materializations.js";
 import {
-  captureRuntimeAuthProfileAccountIdentities,
   clearRuntimeAuthProfileStoreSnapshotCore,
   clearRuntimeAuthProfileStoreSnapshots,
   getPreparedRuntimeAuthProfileStoreSnapshotCore,
@@ -26,7 +25,6 @@ import {
   registerRuntimeAuthProfileStoreMutationListener,
   replaceRuntimeAuthProfileStoreSnapshots,
   setRuntimeAuthProfileStoreSnapshot,
-  withRuntimeAuthProfileAccountIdentities,
 } from "./runtime-snapshots.js";
 import { testing } from "./runtime-snapshots.test-support.js";
 import type { AuthProfileStore, RuntimeAuthProfileStore } from "./types.js";
@@ -72,30 +70,26 @@ function expectOpenAICodexSnapshotCredential(
 }
 
 describe("runtime auth profile snapshots", () => {
-  it("scopes transported saved-account identities without granting credentials or crossing shared owners", async () => {
+  it("keeps another agent's saved credentials outside the current snapshot", () => {
     clearRuntimeAuthProfileStoreSnapshots();
-    const owner = captureRuntimeAuthProfileAccountIdentities().owner;
-    const accounts = { owner, profiles: [{ profileId: "saved:other", provider: "fixture" }] };
-    await withRuntimeAuthProfileAccountIdentities(accounts, async () => {
-      await Promise.resolve();
-      expect(captureRuntimeAuthProfileAccountIdentities().profiles).toEqual(accounts.profiles);
-      expect(getRuntimeAuthProfileStoreSnapshotCore()).toBeUndefined();
-      expect(listOwnedRuntimeAuthProfileStoreSnapshots()).toEqual([]);
-    });
-    expect(captureRuntimeAuthProfileAccountIdentities().profiles).toEqual([]);
-    withRuntimeAuthProfileAccountIdentities(
+    const current = createStore("current-account");
+    const other = createStore("other-account");
+    setRuntimeAuthProfileStoreSnapshot(current, "/tmp/current-agent");
+    setRuntimeAuthProfileStoreSnapshot(other, "/tmp/other-agent");
+    expectOpenAICodexSnapshotCredential(
+      getRuntimeAuthProfileStoreSnapshotCore("/tmp/current-agent"),
       {
-        ...accounts,
-        owner: {
-          kind: "resolved",
-          location: "state-db",
-          sharedDatabasePath: "/other-owner/openclaw.sqlite",
-        },
-      },
-      () => {
-        expect(captureRuntimeAuthProfileAccountIdentities().profiles).toEqual([]);
+        access: "current-account",
       },
     );
+    expectOpenAICodexSnapshotCredential(
+      getRuntimeAuthProfileStoreSnapshotCore("/tmp/other-agent"),
+      {
+        access: "other-account",
+      },
+    );
+    expect(getRuntimeAuthProfileStoreSnapshotCore()).toBeUndefined();
+    clearRuntimeAuthProfileStoreSnapshots();
   });
 
   it("carries the canonical database identity through snapshot enumeration", () => {
