@@ -17,8 +17,8 @@ import {
   isGenericProviderCredentialEnvVar,
   resolveProviderUseAdmission,
 } from "../../../agents/provider-model-auth-source-plan.js";
-import { GuardedConfigIncludeWriteError } from "../../../config/mutation-conflict.js";
 import type { ConfigWriteOptions } from "../../../config/io.types.js";
+import { GuardedConfigIncludeWriteError } from "../../../config/mutation-conflict.js";
 import { resolveResetPreservedSelection } from "../../../config/sessions/reset-preserved-selection.js";
 import { scanDoctorSessionEntriesTolerant } from "../../../config/sessions/session-accessor.js";
 import type { ModelProviderConfigInput } from "../../../config/types.models.js";
@@ -335,7 +335,7 @@ export function revalidateProviderUseBindingMigration(params: {
       bindings[provider] = apiKey;
       continue;
     }
-    removeGeneratedProviderCredential(config, provider);
+    removeGeneratedProviderCredential(config, provider, params.sourceConfig);
   }
   const deferred = Object.keys(checked.bindings ?? {}).filter(
     (provider) => !Object.hasOwn(bindings, provider),
@@ -360,7 +360,11 @@ export function revalidateProviderUseBindingMigration(params: {
   };
 }
 
-function removeGeneratedProviderCredential(config: OpenClawConfig, provider: string): void {
+function removeGeneratedProviderCredential(
+  config: OpenClawConfig,
+  provider: string,
+  sourceConfig?: OpenClawConfig,
+): void {
   const entry = config.models?.providers?.[provider];
   if (entry) {
     delete entry.apiKey;
@@ -373,9 +377,13 @@ function removeGeneratedProviderCredential(config: OpenClawConfig, provider: str
       delete config.models?.providers?.[provider];
     }
   }
-  if (config.models?.providers && Object.keys(config.models.providers).length === 0) {
+  if (
+    config.models?.providers &&
+    Object.keys(config.models.providers).length === 0 &&
+    !sourceConfig?.models?.providers
+  ) {
     delete config.models.providers;
-    if (Object.keys(config.models).length === 0) {
+    if (Object.keys(config.models).length === 0 && !sourceConfig?.models) {
       delete config.models;
     }
   }
@@ -407,45 +415,55 @@ export async function writeProviderUseBindingMigration(
   });
   let checked = revalidateProviderUseBindingMigration(scopedParams());
   try {
-    await write(checked, Object.keys(checked.bindings).length === 0 ? undefined : (publish) => {
-      let entered = false;
-      try {
-        const currentParams = scopedParams();
-        withAuthProfilePublicationLock(currentParams.env, () => {
-          entered = true;
-          const current = revalidateProviderUseBindingMigration({
-            ...currentParams,
-            config: checked.config,
-            bindings: checked.bindings,
-          });
-          if (
-            !isDeepStrictEqual(current.config, checked.config) ||
-            !isDeepStrictEqual(current.bindings, checked.bindings) ||
-            (checked.pending && !current.pending)
-          ) {
-            throw new ProviderUseBindingPublicationChanged(current);
-          }
-          publish();
-        });
-      } catch (error) {
-        if (entered) {
-          throw error;
-        }
-        // An unavailable external lock cannot certify a migration or prevent startup.
-        throw new ProviderUseBindingPublicationChanged(checked);
-      }
-    });
+    await write(
+      checked,
+      Object.keys(checked.bindings).length === 0
+        ? undefined
+        : (publish) => {
+            let entered = false;
+            try {
+              const currentParams = scopedParams();
+              withAuthProfilePublicationLock(currentParams.env, () => {
+                entered = true;
+                const current = revalidateProviderUseBindingMigration({
+                  ...currentParams,
+                  config: checked.config,
+                  bindings: checked.bindings,
+                });
+                if (
+                  !isDeepStrictEqual(current.config, checked.config) ||
+                  !isDeepStrictEqual(current.bindings, checked.bindings) ||
+                  (checked.pending && !current.pending)
+                ) {
+                  throw new ProviderUseBindingPublicationChanged(current);
+                }
+                publish();
+              });
+            } catch (error) {
+              if (entered) {
+                throw error;
+              }
+              // An unavailable external lock cannot certify a migration or prevent startup.
+              throw new ProviderUseBindingPublicationChanged(checked);
+            }
+          },
+    );
   } catch (error) {
     if (error instanceof ProviderUseBindingPublicationChanged) {
       checked = error.checked;
     } else if (error instanceof GuardedConfigIncludeWriteError) {
-      checked.warnings.push("Provider bindings in included config require an explicit edit to the included file.");
+      const selections = Object.entries(checked.bindings)
+        .map(([provider, ref]) => `${provider} (${ref.id})`)
+        .join(", ");
+      checked.warnings.push(
+        `Provider bindings ${selections} were not written to included config ${error.includePath}. Bind them explicitly in that file.`,
+      );
     } else {
       throw error;
     }
     // Publish independent repairs, but do not retry newly stale credential authority.
     for (const provider of Object.keys(checked.bindings)) {
-      removeGeneratedProviderCredential(checked.config, provider);
+      removeGeneratedProviderCredential(checked.config, provider, params.sourceConfig);
     }
     checked.bindings = {};
     checked.pending = false;

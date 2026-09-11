@@ -396,7 +396,6 @@ describe("included config writer exclusion", () => {
     },
   );
 
-
   it.each([false, true])(
     "refuses inherited include authority before preparation (revoke=%s)",
     async (revoke) => {

@@ -761,7 +761,7 @@ async function tryWriteIncludeOwnedConfigMutation(params: {
   ) {
     // Root-backed include backups/publication cannot recheck caller authority
     // at their final effects. Refuse before preparing any include mutation.
-    throw new GuardedConfigIncludeWriteError();
+    throw new GuardedConfigIncludeWriteError(includePath);
   }
 
   const writeEnv = params.io?.env ?? process.env;

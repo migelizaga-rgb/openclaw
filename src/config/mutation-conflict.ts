@@ -13,7 +13,7 @@ export const GUARDED_CONFIG_INCLUDE_WRITE_ERROR =
 
 /** The include owner cannot retain caller authority through its final effects. */
 export class GuardedConfigIncludeWriteError extends Error {
-  constructor() {
+  constructor(readonly includePath: string) {
     super(GUARDED_CONFIG_INCLUDE_WRITE_ERROR);
     this.name = "GuardedConfigIncludeWriteError";
   }

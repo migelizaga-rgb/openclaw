@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDoctorPrompter } from "../commands/doctor-prompter.js";
 import { prepareProviderUseBindingMigration } from "../commands/doctor/shared/provider-use-binding-migration.js";
+import { readConfigFileSnapshot } from "../config/io.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { SecretRef } from "../config/types.secrets.js";
 import {
@@ -135,5 +136,81 @@ it.each(
       env: state.env,
     });
     expect(repeated.warnings?.join("\n")).toContain("byteplus:saved");
+  },
+);
+
+it.each(["models", "providers"] as const)(
+  "defers a selected provider binding owned by a %s include without changing either file",
+  async (includeOwner) => {
+    state = await createOpenClawTestState({
+      label: "doctor-provider-binding-include",
+      env: {
+        BYTEPLUS_API_KEY: "fixture-env-account",
+        OPENCLAW_BUNDLED_PLUGINS_DIR: fileURLToPath(new URL("../../extensions/", import.meta.url)),
+        OPENCLAW_DISABLE_BUNDLED_PLUGINS: "0",
+        OPENCLAW_UPDATE_IN_PROGRESS: undefined,
+      },
+    });
+    const includeName = `${includeOwner}-owned.json`;
+    const includePath = path.join(path.dirname(state.configPath), includeName);
+    const includeContents = `${JSON.stringify(includeOwner === "models" ? { providers: {} } : {}, null, 2)}\n`;
+    await fs.mkdir(path.dirname(includePath), { recursive: true });
+    await fs.writeFile(includePath, includeContents);
+    await state.writeConfig({
+      agents: { defaults: { model: "byteplus-plan/ark-code-latest" }, entries: { main: {} } },
+      models:
+        includeOwner === "models"
+          ? { $include: `./${includeName}` }
+          : { providers: { $include: `./${includeName}` } },
+    });
+    const rootContents = await fs.readFile(state.configPath, "utf8");
+    const snapshot = await readConfigFileSnapshot({ observe: false });
+    expect(snapshot.valid).toBe(true);
+    const prepared = prepareProviderUseBindingMigration({
+      config: snapshot.sourceConfig,
+      configPath: state.configPath,
+      env: state.env,
+    });
+    expect(prepared.bindings).toEqual({
+      "byteplus-plan": { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
+    });
+    const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+    const options = { repair: true, nonInteractive: true };
+    const ctx: DoctorHealthFlowContext = {
+      runtime,
+      options,
+      prompter: createDoctorPrompter({ runtime, options }),
+      cfg: prepared.config,
+      cfgForPersistence: structuredClone(prepared.config),
+      configPath: state.configPath,
+      sourceConfigValid: true,
+      env: state.env,
+      configResult: {
+        cfg: prepared.config,
+        shouldWriteConfig: true,
+        providerUseBindings: prepared.bindings,
+        providerUseBindingMigrationPending: prepared.pending,
+        unsetPaths: prepared.unsetPaths,
+      },
+    };
+
+    await runWriteConfigHealth(ctx, { runPostWriteRepairs: false });
+
+    expect(await fs.readFile(state.configPath, "utf8")).toBe(rootContents);
+    expect(await fs.readFile(includePath, "utf8")).toBe(includeContents);
+    expect(ctx.cfg.models?.providers?.["byteplus-plan"]).toBeUndefined();
+    expect(ctx.configResult.providerUseBindingMigrationPending).toBe(false);
+    const output = note.mock.calls.flat().join("\n");
+    expect(output).toContain("byteplus-plan");
+    expect(output).toContain("BYTEPLUS_API_KEY");
+    expect(output).toContain(includeName);
+    expect(output).not.toContain("Bound selected provider");
+    expect(output).not.toContain("fixture-env-account");
+    const repeated = prepareProviderUseBindingMigration({
+      config: snapshot.sourceConfig,
+      configPath: state.configPath,
+      env: state.env,
+    });
+    expect(repeated.bindings).toEqual(prepared.bindings);
   },
 );

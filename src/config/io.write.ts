@@ -471,30 +471,31 @@ export async function writeConfigFileFromContext(
       // fs-safe's copy fallback has no final authority hook. Guarded operations
       // must publish by rename so a failed attempt cannot continue under stale authority.
       copyFallbackOnPermissionError: !beforeCommit && !withCommit,
-      fileSystem: beforeCommit || withCommit
-        ? {
-            promises: {
-              ...guardedFs.promises,
-              rename: async (source, destination) => {
-                await beforeCommit?.();
-                options.assertConfigPathForWrite?.();
-                if (options.baseSnapshot) {
-                  assertBaseSnapshotStillCurrent(snapshot, configPath, deps.fs);
-                }
-                if (withCommit) {
-                  return withCommit(() => {
-                    options.assertConfigPathForWrite?.();
-                    if (options.baseSnapshot) {
-                      assertBaseSnapshotStillCurrent(snapshot, configPath, deps.fs);
-                    }
-                    guardedFs.renameSync(source, destination);
-                  });
-                }
-                return guardedFs.promises.rename(source, destination);
+      fileSystem:
+        beforeCommit || withCommit
+          ? {
+              promises: {
+                ...guardedFs.promises,
+                rename: async (source, destination) => {
+                  await beforeCommit?.();
+                  options.assertConfigPathForWrite?.();
+                  if (options.baseSnapshot) {
+                    assertBaseSnapshotStillCurrent(snapshot, configPath, deps.fs);
+                  }
+                  if (withCommit) {
+                    return withCommit(() => {
+                      options.assertConfigPathForWrite?.();
+                      if (options.baseSnapshot) {
+                        assertBaseSnapshotStillCurrent(snapshot, configPath, deps.fs);
+                      }
+                      guardedFs.renameSync(source, destination);
+                    });
+                  }
+                  return guardedFs.promises.rename(source, destination);
+                },
               },
-            },
-          }
-        : guardedFs,
+            }
+          : guardedFs,
       beforeRename: async () => {
         options.assertConfigPathForWrite?.();
         if (options.baseSnapshot) {
