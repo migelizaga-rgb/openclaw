@@ -18,6 +18,7 @@ import { nodeVersionSatisfiesEngine } from "../../infra/runtime-guard.js";
 import { parseTcpPortFromArgs } from "../../infra/tcp-port.js";
 import { CLI_NAME } from "../cli-name.js";
 import { resolveNodeRunner } from "./shared.js";
+import type { PackageRuntimeRecovery } from "./update-command-node-runtime.js";
 
 export type ManagedServiceRootRedirect = {
   root: string;
@@ -96,7 +97,7 @@ export function isGatewayServiceManagementAllowedForUpdate(
   return resolveGatewayServiceManagementBlockMessageForUpdate(env) === undefined;
 }
 
-type PackageRuntimePreflight = {
+export type PackageRuntimePreflight = {
   nodeRunner?: string;
   replacedNodeRunner?: string;
   targetVersion?: string;
@@ -108,6 +109,7 @@ export async function resolvePackageRuntimePreflight(params: {
   timeoutMs?: number;
   nodeRunner?: string;
   fallbackNodeRunner?: string;
+  runtimeRecovery?: PackageRuntimeRecovery;
 }): Promise<Result<PackageRuntimePreflight, string>> {
   const nodeRunner = normalizeOptionalString(params.nodeRunner);
   const unchanged = (): PackageRuntimePreflight => (nodeRunner ? { nodeRunner } : {});
@@ -164,6 +166,21 @@ export async function resolvePackageRuntimePreflight(params: {
   if (satisfies !== false) {
     return ok(unchangedRuntime);
   }
+  if (params.runtimeRecovery && target.nodeEngine) {
+    const { resolveTargetNodeRuntime } = await import("./update-command-node-runtime.js");
+    const recovered = await resolveTargetNodeRuntime({
+      engine: target.nodeEngine,
+      recovery: params.runtimeRecovery,
+      timeoutMs: params.timeoutMs,
+    });
+    if (recovered) {
+      return ok({
+        nodeRunner: recovered,
+        replacedNodeRunner: nodeRunner ?? resolveNodeRunner(),
+        targetVersion,
+      });
+    }
+  }
   const runtimeLabel = runtime.nodeRunner
     ? `Node ${runtime.version ?? "unknown"} at ${runtime.nodeRunner}`
     : `Node ${runtime.version ?? "unknown"}`;
@@ -219,7 +236,12 @@ export function resolveManagedServiceNodeRunner(
 
 export async function resolveManagedServicePackageUpdatePlan(params: {
   root: string;
-}): Promise<{ rootRedirect: ManagedServiceRootRedirect | null; nodeRunner?: string }> {
+  rebind?: boolean;
+}): Promise<{
+  rootRedirect: ManagedServiceRootRedirect | null;
+  serviceRoot?: string;
+  nodeRunner?: string;
+}> {
   if (!isGatewayServiceManagementAllowedForUpdate(process.env)) {
     return { rootRedirect: null };
   }
@@ -238,7 +260,9 @@ export async function resolveManagedServicePackageUpdatePlan(params: {
     (await tryRealpathOrResolve(params.root)) !== layout.packageRootReal
   ) {
     return {
-      rootRedirect: { root: serviceRoot, previousRoot: params.root },
+      ...(params.rebind === false
+        ? { rootRedirect: { root: serviceRoot, previousRoot: params.root } }
+        : { rootRedirect: null, serviceRoot }),
       ...(serviceNode ? { nodeRunner: serviceNode } : {}),
     };
   }
@@ -364,9 +388,18 @@ export async function resolveUpdatedGatewayRestartPort(params: {
 /** Describe the selected plan without changing roots, runtime, or service authority. */
 export function formatManagedServicePackageUpdatePlan(params: {
   rootRedirect: ManagedServiceRootRedirect | null;
+  serviceRoot?: string;
   nodeRunner?: string;
 }): Array<{ level: "muted" | "warn"; message: string }> {
   const { rootRedirect, nodeRunner } = params;
+  if (params.serviceRoot) {
+    return [
+      {
+        level: "muted",
+        message: `Updating this installation and rebinding the managed Gateway from ${params.serviceRoot} after ownership and runtime verification.`,
+      },
+    ];
+  }
   if (rootRedirect) {
     return [
       {

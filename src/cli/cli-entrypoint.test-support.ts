@@ -63,3 +63,37 @@ export const gatewayDirectStopEntrypoints = {
     distWorkerPath: "process/gateway-work-admission.js",
   },
 } as const;
+
+// Native deadlines cover the receiver and its effects, not repeated source transforms.
+export const updateExecutorEntrypoints = {
+  native: {
+    currentModuleUrl: import.meta.url,
+    sourceWorkerName: "daemon-cli/update-executor",
+    distWorkerPath: "cli/daemon-cli/update-executor.js",
+  },
+  owner: {
+    currentModuleUrl: import.meta.url,
+    sourceWorkerName: "update-cli/update-command-executor",
+    distWorkerPath: "cli/update-cli/update-command-executor.js",
+  },
+  execFile: {
+    currentModuleUrl: import.meta.url,
+    sourceWorkerName: "../daemon/exec-file",
+    distWorkerPath: "daemon/exec-file.js",
+  },
+  command: {
+    currentModuleUrl: import.meta.url,
+    sourceWorkerName: "../process/exec",
+    distWorkerPath: "process/exec.js",
+  },
+  lease: {
+    currentModuleUrl: import.meta.url,
+    sourceWorkerName: "../infra/update-managed-service-handoff-lease",
+    distWorkerPath: "infra/update-managed-service-handoff-lease.js",
+  },
+  activation: {
+    currentModuleUrl: import.meta.url,
+    sourceWorkerName: "../infra/package-update-activation",
+    distWorkerPath: "infra/package-update-activation.js",
+  },
+} as const;

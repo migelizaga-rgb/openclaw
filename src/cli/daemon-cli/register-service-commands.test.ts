@@ -98,7 +98,11 @@ describe("addGatewayServiceCommands", () => {
         from: "user",
       });
       expect(output).toHaveBeenCalledWith(
-        JSON.stringify({ updateExecutor: "root-spawner-v1", targetRootBinding: true }),
+        JSON.stringify({
+          updateExecutor: "root-spawner-v1",
+          targetRootBinding: true,
+          retainedOwnerBinding: true,
+        }),
       );
       expect(runDaemonInstall).not.toHaveBeenCalled();
       expect(runDaemonRestart).not.toHaveBeenCalled();

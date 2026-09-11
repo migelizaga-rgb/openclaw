@@ -204,9 +204,11 @@ it.each([
   { json: false, legacy: false, parentOwns: false },
   { json: true, legacy: false, parentOwns: true },
   { json: false, legacy: true, parentOwns: true },
+  { json: true, legacy: false, parentOwns: true, retained: true },
+  { json: true, legacy: true, parentOwns: true, retained: true },
 ])(
-  "fences migrated candidate finalization (json=$json, legacy=$legacy, parentOwns=$parentOwns)",
-  async ({ json, legacy, parentOwns }) => {
+  "fences migrated candidate finalization (json=$json, legacy=$legacy, parentOwns=$parentOwns, retained=$retained)",
+  async ({ json, legacy, parentOwns, retained }) => {
     const stateDir = await fs.realpath(dirs.make("migrated-update-"));
     const env = {
       ...process.env,
@@ -225,7 +227,7 @@ it.each([
         const fs = require("node:fs");
         const { DatabaseSync } = require("node:sqlite");
         if (process.argv[2] === "--check") {
-          process.stdout.write(JSON.stringify({state:${OPENCLAW_STATE_SCHEMA_VERSION + 1}, agent:${OPENCLAW_AGENT_SCHEMA_VERSION}}));
+          process.stdout.write(JSON.stringify({state:${OPENCLAW_STATE_SCHEMA_VERSION + 1}, agent:${OPENCLAW_AGENT_SCHEMA_VERSION},...(${JSON.stringify(retained)}?{executorDelegation:"pid-start-v1"}:{})}));
         } else {
           const input = JSON.parse(fs.readFileSync(0,"utf8"));
           fs.writeFileSync(${JSON.stringify(legacyEffect)}, "unfenced effect");
@@ -299,7 +301,11 @@ it.each([
       );
     const before = legacy ? await family() : undefined;
     const work = withUpdateCommandExecutor(run.runId, async (executor) => {
-      const executorFence = await executor.enter(root);
+      const serviceRoot = retained ? path.join(stateDir, "service-A") : undefined;
+      if (serviceRoot) {
+        await fs.mkdir(serviceRoot);
+      }
+      const executorFence = await executor.enter(root, { serviceRoot });
       return await continueMigratedUpdateInFreshProcess(
         {
           mutationStarted: true,

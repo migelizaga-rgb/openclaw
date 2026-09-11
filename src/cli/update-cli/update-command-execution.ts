@@ -112,6 +112,7 @@ export async function executeMutableUpdate(
       timeoutMs: updateStepTimeoutMs,
       invocationCwd: params.invocationCwd,
       managedServiceRootRedirect: params.managedServiceRootRedirect,
+      managedServiceRoot: params.managedServiceRoot,
       expectedServices: admission.services,
       legacyConfigPlan: params.legacyConfigPlan,
     });
@@ -169,10 +170,13 @@ export async function executeMutableUpdate(
       return;
     }
     try {
-      for (const mutationRoot of new Set(mutationRoots)) {
+      for (const mutationRoot of new Set(
+        params.managedServiceRoot ? [params.managedServiceRoot] : mutationRoots,
+      )) {
         preManagedServiceStop = await maybeStopManagedServiceBeforeMutableUpdate({
           updateInstallKind: params.updateInstallKind,
           root: mutationRoot,
+          handoffRoot: params.managedServiceRoot ? params.root : undefined,
           shouldRestart: params.shouldRestart,
           jsonMode: Boolean(opts.json),
           timeoutMs: updateStepTimeoutMs,
@@ -186,7 +190,7 @@ export async function executeMutableUpdate(
           handoffFromGateway: (state) =>
             handoffUpdateFromGateway({
               state,
-              root: mutationRoot,
+              root: params.managedServiceRoot ? params.root : mutationRoot,
               opts,
               // Pin the inspected package. Extended-stable resolves its protected
               // selector again because its public CLI contract forbids --tag.
@@ -556,6 +560,7 @@ export async function executeMutableUpdate(
         timeoutMs: updateStepTimeoutMs,
         invocationCwd: params.invocationCwd,
         managedServiceRootRedirect: params.managedServiceRootRedirect,
+        managedServiceRoot: params.managedServiceRoot,
         legacyConfigPlan: params.legacyConfigPlan,
       });
     }
@@ -568,6 +573,8 @@ export async function executeMutableUpdate(
         await params.prepareMutableUpdate(admission?.managedEnv);
       }
       const packageUpdate: PackageInstallUpdateParams = {
+        // A separate serving root still needs the preparation/activation hooks.
+        requirePackageReplacement: params.managedServiceRoot !== undefined,
         reapplyLocalOverrides: opts.reapplyLocalOverrides,
         root: params.root,
         installKind: params.installKind,

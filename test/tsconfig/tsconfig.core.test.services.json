@@ -17,6 +17,10 @@
     "../../src/secrets/**/*.test.ts",
     "../../src/secrets/**/*.test.tsx",
     "../../src/plugin-state/**/*.test.ts",
-    "../../src/plugin-state/**/*.test.tsx"
+    "../../src/plugin-state/**/*.test.tsx",
+    "../../src/cli/update-cli/update-command-executor*.test.ts",
+    "../../src/cli/update-cli/update-command-executor*.test.tsx",
+    "../../src/cli/update-cli/update-command-service*.test.ts",
+    "../../src/cli/update-cli/update-command-service*.test.tsx"
   ]
 }
