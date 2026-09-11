@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { detectGlobalInstallManagerForRoot } from "./update-global.js";
-import { buildUpdateCommandRunner, UPDATE_RUNNER_TIMEOUT_MS } from "./update-runner-command.js";
+import { UPDATE_RUNNER_TIMEOUT_MS } from "./update-run-timeouts.js";
+import { buildUpdateCommandRunner } from "./update-runner-command.js";
 import type {
   CommandRunner,
   UpdateInstallSurface,
