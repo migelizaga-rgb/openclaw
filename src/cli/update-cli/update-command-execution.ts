@@ -81,6 +81,10 @@ export async function executeMutableUpdate(
   params: MutableUpdateExecutionParams,
 ): Promise<MutableUpdateExecutionResult | null> {
   const { opts, updateStepTimeoutMs } = params;
+  const mode: UpdateRunResult["mode"] =
+    params.updateInstallKind === "git"
+      ? "git"
+      : (params.packageInstallTarget?.manager ?? "unknown");
   if (opts.recovery) {
     throw new UpdatePreMutationError(
       "rollback-state-unverified",
@@ -194,10 +198,7 @@ export async function executeMutableUpdate(
                 params.updateInstallKind === "package" && params.channel !== "extended-stable"
                   ? (normalizeTag(params.packageInstallSpec) ?? undefined)
                   : undefined,
-              mode:
-                params.updateInstallKind === "git"
-                  ? "git"
-                  : (params.packageInstallTarget?.manager ?? "unknown"),
+              mode,
               timeoutMs: updateStepTimeoutMs,
               devTarget: params.devTarget,
               nodeRunner: params.packageUpdateNodeRunner,
@@ -417,10 +418,7 @@ export async function executeMutableUpdate(
         nodeRunner: params.packageUpdateNodeRunner,
         result: {
           status: "error",
-          mode:
-            params.updateInstallKind === "git"
-              ? "git"
-              : (params.packageInstallTarget?.manager ?? "unknown"),
+          mode,
           root,
           reason: validation.reason,
           before: { version: await readPackageVersion(params.root) },
@@ -679,10 +677,7 @@ export async function executeMutableUpdate(
     // Mutable exceptions retain an unsafe outcome through cleanup/reporting.
     result = {
       status: "error",
-      mode:
-        params.updateInstallKind === "git"
-          ? "git"
-          : (params.packageInstallTarget?.manager ?? "unknown"),
+      mode,
       root: params.root,
       reason: preMutationFailure ? err.reason : "update-failed",
       recovery: preMutationFailure
