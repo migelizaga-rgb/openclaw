@@ -26,7 +26,6 @@ import { matchesProviderPluginRef } from "../plugins/provider-registry-shared.js
 import { prepareProviderExternalAuthWithPlugin } from "../plugins/provider-runtime.js";
 import { resolveManifestSyntheticAuthProviderRefState } from "../plugins/synthetic-auth.runtime.js";
 import { resolveNonEnvSecretRefApiKeyMarker } from "../secrets/provider-credential-values.js";
-import { resolveProviderBindingEnvVarCandidates } from "../secrets/provider-env-vars.js";
 import { ensureAuthProfileStore } from "./auth-profiles/store-runtime.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { isNonSecretApiKeyMarker } from "./model-auth-markers.js";
@@ -36,6 +35,7 @@ import {
   buildPluginCatalogConfig,
   prepareProviderCatalogRun,
   reportProviderCatalogSecretFailure,
+  resolveCatalogProviderUseAdmission,
 } from "./models-config.providers.catalog-context.js";
 import {
   resolveImplicitProviderDiscoveryScope,
@@ -51,10 +51,7 @@ import {
   createProviderAuthResolver,
   resolveMissingProviderApiKey,
 } from "./models-config.providers.secrets.js";
-import {
-  resolveProviderUseAdmission,
-  type ProviderUseBinding,
-} from "./provider-model-auth-source-plan.js";
+import type { ProviderUseBinding } from "./provider-model-auth-source-plan.js";
 
 const log = createSubsystemLogger("agents/model-providers");
 
@@ -586,16 +583,10 @@ export async function resolveImplicitProviders(
   const sourceConfigForSecrets = params.providerDiscoveryEntriesOnly
     ? undefined
     : (params.sourceConfigForSecrets ?? params.config);
-  const providerAdmission = resolveProviderUseAdmission({
-    config: params.sourceConfigForSecrets ?? params.config,
+  const providerAdmission = resolveCatalogProviderUseAdmission({
+    ...params,
     env,
     profiles: params.providerDiscoveryEntriesOnly ? undefined : getAuthStore().profiles,
-    providerEnvVars: resolveProviderBindingEnvVarCandidates({
-      config: params.config,
-      env,
-      workspaceDir: params.workspaceDir,
-      manifestPlugins: params.pluginMetadataSnapshot?.manifestRegistry.plugins,
-    }),
   });
   const authInputs = [
     env,

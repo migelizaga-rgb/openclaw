@@ -20,6 +20,7 @@ import type {
   LegacyStateMigrationStepReceipt,
   MigrationMessages,
 } from "../infra/state-migrations.types.js";
+import type { PluginMetadataSnapshotScopeRunner } from "../plugins/current-plugin-metadata-snapshot.js";
 import { setActiveDegradedPlugins } from "../plugins/runtime-degraded-state.js";
 import { ExitError } from "../runtime.js";
 import { withArtifactPreservingStateReads } from "../state/openclaw-state-db-readonly.js";
@@ -41,9 +42,104 @@ import {
   throwStartupMigrationRefusal,
 } from "./doctor-startup-migration-refusal.js";
 import {
+  commitAutomaticConfigRepair,
   type planAutomaticConfigRepair,
   resolveStartupConfigSnapshot,
 } from "./doctor/shared/automatic-startup-config-repair.js";
+
+/** Persist approved config repairs after state migrations consume their legacy locators. */
+export async function commitStartupConfigRepairs(params: {
+  snapshotRead: DoctorConfigPreflightPluginSnapshotRead;
+  automaticConfigRepair: ReturnType<typeof planAutomaticConfigRepair>;
+  activeConfigRepair: boolean;
+  gatewayStartupCheckpointRequired: boolean;
+  migrateProviderBindings: boolean;
+  env: NodeJS.ProcessEnv;
+  lease: StartupMigrationLease | undefined;
+  measure?: ConfigSnapshotReadMeasure;
+  beforeStateMigrations?: () => Promise<boolean>;
+  readSnapshot: () => Promise<DoctorConfigPreflightPluginSnapshotRead>;
+  runWithPluginMetadataSnapshot: PluginMetadataSnapshotScopeRunner;
+  report: (result: MigrationMessages) => void;
+}): Promise<DoctorConfigPreflightPluginSnapshotRead> {
+  let snapshotRead = params.snapshotRead;
+  let snapshot = snapshotRead.snapshot;
+  const guardWrite = async () => {
+    if (params.gatewayStartupCheckpointRequired && !params.lease) {
+      throw new Error("Automatic startup config repair requires the startup migration lease.");
+    }
+    // Re-read disk at the write edge; an external edit cannot reuse the admitted plan.
+    if (
+      params.beforeStateMigrations &&
+      !(await measureDoctorConfigPreflightStep(
+        "startup-config-repair-guard",
+        params.beforeStateMigrations,
+        params.measure,
+      ))
+    ) {
+      throwStartupMigrationGuardRejected();
+    }
+    params.lease?.heartbeat();
+  };
+  const automaticConfigRepair = params.automaticConfigRepair;
+  if (automaticConfigRepair) {
+    await guardWrite();
+    await measureDoctorConfigPreflightStep(
+      "automatic-config-repair",
+      () =>
+        params.runWithPluginMetadataSnapshot({ config: automaticConfigRepair.config }, () =>
+          commitAutomaticConfigRepair(automaticConfigRepair, snapshot),
+        ),
+      params.measure,
+    );
+    note(
+      `Migrated legacy config keys${params.activeConfigRepair ? " in the active openclaw.json" : " at startup"}:\n${automaticConfigRepair.changes.map((entry) => `- ${entry}`).join("\n")}`,
+      "Doctor changes",
+    );
+    snapshotRead = await params.readSnapshot();
+    snapshot = snapshotRead.snapshot;
+  }
+  if (params.migrateProviderBindings && snapshot.valid && snapshot.exists) {
+    const {
+      prepareProviderUseBindingMigration,
+      revalidateProviderUseBindingMigration,
+      completeProviderUseBindingMigration,
+    } = await import("./doctor/shared/provider-use-binding-migration.js");
+    const config = snapshot.sourceConfig ?? snapshot.config ?? {};
+    let bindingMigration = await params.runWithPluginMetadataSnapshot({ config }, () =>
+      prepareProviderUseBindingMigration({ config, configPath: snapshot.path, env: params.env }),
+    );
+    params.report({ changes: [], warnings: bindingMigration.warnings ?? [] });
+    if (bindingMigration.changes.length > 0 || bindingMigration.pending) {
+      await guardWrite();
+      if (bindingMigration.bindings) {
+        const checked = await revalidateProviderUseBindingMigration({
+          config: bindingMigration.config,
+          sourceConfig: snapshot.sourceConfig,
+          configPath: snapshot.path,
+          env: params.env,
+          bindings: bindingMigration.bindings,
+        });
+        bindingMigration = { ...bindingMigration, ...checked };
+        params.report({ changes: [], warnings: checked.warnings });
+      }
+      if (bindingMigration.changes.length > 0) {
+        await commitAutomaticConfigRepair(bindingMigration, snapshot, bindingMigration.unsetPaths);
+        params.report({ changes: bindingMigration.changes, warnings: [] });
+        snapshotRead = await params.readSnapshot();
+        snapshot = snapshotRead.snapshot;
+      }
+      params.lease?.heartbeat();
+      if (bindingMigration.pending) {
+        params.report({
+          changes: [],
+          warnings: completeProviderUseBindingMigration(snapshot.path, params.env),
+        });
+      }
+    }
+  }
+  return snapshotRead;
+}
 
 /** Admit the same config and state before the lease and again before migration writes. */
 export async function readStartupMigrationSnapshot(params: {

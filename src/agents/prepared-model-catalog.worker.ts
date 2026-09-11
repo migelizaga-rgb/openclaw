@@ -30,6 +30,7 @@ import { replaceRuntimeAuthProfileStoreSnapshots } from "./auth-profiles/runtime
 import { loadAuthProfileStoreWithoutExternalProfiles } from "./auth-profiles/store-runtime.js";
 import { preserveResolvedSecretBackedCredentials } from "./auth-profiles/store.js";
 import { prepareModelCatalogAuthLabels } from "./model-catalog-auth-labels.js";
+import { resolveSelectedModelProviderIds } from "./model-selection-config.js";
 import { resolveImplicitProviderDiscoveryScope } from "./models-config.providers.discovery-scope.js";
 import {
   fingerprintPreparedModelCatalogGeneration,
@@ -40,6 +41,7 @@ import {
 } from "./prepared-model-catalog-worker.js";
 import { prepareOwnedPluginLoadContext } from "./prepared-model-runtime.plugin-context.js";
 import { scopeSyntheticAuthProviderRefs } from "./prepared-model-runtime.synthetic-auth.js";
+import { resolveProviderAuthAliasMap } from "./provider-auth-aliases.js";
 import { resolveProviderUseAdmission } from "./provider-model-auth-source-plan.js";
 import { loadAgentRuntimePluginRegistryHandle } from "./runtime-plugins.js";
 import { AuthStorage } from "./sessions/auth-storage.js";
@@ -242,6 +244,15 @@ export async function runPreparedModelCatalogWorkerRequest(
       config: value.input.config,
       env: value.input.env,
       profiles: authStore.profiles,
+      requestedProviders: resolveSelectedModelProviderIds({
+        cfg: value.input.config,
+        agentId: value.input.agentId,
+      }),
+      storedCredentialAuthAliases: resolveProviderAuthAliasMap({
+        ...value.input,
+        metadataSnapshot: prepared.pluginGeneration.pluginMetadataSnapshot,
+        storedCredential: true,
+      }),
       nativeProviders: Object.entries(credentials).flatMap(([provider, credential]) =>
         credential.type === "api_key" && credential.nativeAuth ? [provider] : [],
       ),

@@ -1,6 +1,7 @@
 // Doctor config preflight tests cover last-known-good snapshots and config snapshot promotion.
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyCliProfileEnv } from "../cli/profile.js";
 import { promoteConfigSnapshotToLastKnownGood, readConfigFileSnapshot } from "../config/config.js";
@@ -11,6 +12,7 @@ import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../infra/k
 import {
   hasActiveStartupMigrationLease,
   readMigrationCheckpointStatus,
+  recordSuccessfulStartupMigrations,
 } from "../infra/startup-migration-checkpoint.js";
 import {
   createUpdateRun,
@@ -29,6 +31,7 @@ import {
 } from "../state/openclaw-state-db.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { resolveMigrationCheckpointIdentity } from "./doctor-config-preflight-checkpoint.js";
+import { readDoctorConfigPreflightSnapshot } from "./doctor-config-preflight-plugin-index.js";
 import {
   runDoctorConfigPreflight,
   shouldSkipPluginValidationForDoctorConfigPreflight,
@@ -237,6 +240,67 @@ describe("runDoctorConfigPreflight", () => {
       expect(JSON.parse(await fs.readFile(`${configPath}.bak`, "utf-8"))).toHaveProperty(
         "cron.store",
         storePath,
+      );
+    });
+  });
+
+  it("binds an env-only selected Plan during startup before Doctor and keeps the write sparse", async () => {
+    await withDoctorConfigPreflightHome(async (home) => {
+      await withEnvAsync(
+        {
+          BYTEPLUS_API_KEY: "fixture-byteplus-env-key",
+          OPENCLAW_BUNDLED_PLUGINS_DIR: fileURLToPath(
+            new URL("../../extensions/", import.meta.url),
+          ),
+          OPENCLAW_DISABLE_BUNDLED_PLUGINS: "0",
+        },
+        async () => {
+          const configPath = await writeOpenClawConfig(home, {
+            gateway: { mode: "local" },
+            agents: {
+              defaults: { model: "byteplus-plan/ark-code-latest" },
+              entries: { main: {} },
+            },
+            plugins: { allow: ["byteplus"], entries: { byteplus: { enabled: true } } },
+          });
+          const previous = await readDoctorConfigPreflightSnapshot({
+            allowCurrentPluginMetadata: false,
+            includePluginMetadata: true,
+            preparePluginMetadataSnapshot: false,
+            skipPluginValidation: false,
+          });
+          const previousCheckpoint = {
+            buildIdentity: "previous-build-same-package-version",
+            identity: resolveMigrationCheckpointIdentity({
+              snapshot: previous.snapshot,
+              baseConfig: previous.snapshot.sourceConfig,
+              pluginMigrationFingerprint: previous.pluginMigrationFingerprint,
+            }),
+          };
+          recordSuccessfulStartupMigrations(previousCheckpoint);
+          expect(readMigrationCheckpointStatus(previousCheckpoint)).toBe("startup-current");
+
+          const preflight = await runDoctorConfigPreflight(startupCheckpointOptions);
+
+          const expected = {
+            apiKey: { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
+          };
+          expect(preflight.snapshot.valid).toBe(true);
+          expect(preflight.baseConfig.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(
+            expected.apiKey,
+          );
+          const written = await fs.readFile(configPath, "utf8");
+          expect(JSON.parse(written).models.providers).toEqual({ "byteplus-plan": expected });
+          expect(written).not.toContain("fixture-byteplus-env-key");
+          expect(noteMock).toHaveBeenCalledWith(
+            expect.stringContaining("Bound selected provider byteplus-plan to BYTEPLUS_API_KEY"),
+            "Doctor changes",
+          );
+
+          await runDoctorConfigPreflight(startupCheckpointOptions);
+
+          expect(await fs.readFile(configPath, "utf8")).toBe(written);
+        },
       );
     });
   });

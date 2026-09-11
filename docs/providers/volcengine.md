@@ -18,8 +18,9 @@ The Volcengine provider gives access to Doubao models and third-party models hos
 
 ## Getting started
 
-For an existing selected coding model, run `openclaw doctor --fix` once to
-preserve its shared-key binding. New setup uses onboarding below.
+Gateway startup and `openclaw doctor --fix` share the
+[one-time upgrade repair](/concepts/model-providers) for existing selected coding
+models. Saved accounts are preserved. New setup uses onboarding below.
 
 <Steps>
   <Step title="Install the plugin">

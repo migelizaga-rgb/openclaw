@@ -34,8 +34,9 @@ Model refs follow the auth path: `minimax/<model>` for API-key setups, `minimax-
 `MINIMAX_API_KEY` is declared for both providers. To use it for model requests,
 run onboarding or explicitly configure the intended `models.providers` entry.
 The environment key alone does not select a provider.
-For an existing selected model, `openclaw doctor --fix` preserves the binding
-during the one-time [shared-key upgrade](/concepts/model-providers).
+For an existing selected model, Gateway startup and `openclaw doctor --fix` use
+the same one-time [shared-key upgrade](/concepts/model-providers), which preserves
+saved accounts.
 
 ## Getting started
 

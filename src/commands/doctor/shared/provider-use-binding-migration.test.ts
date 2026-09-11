@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAuthProfileStoreForRuntime } from "../../../agents/auth-profiles.js";
 import type { AuthProfileStore } from "../../../agents/auth-profiles/types.js";
+import { persistAuthProfileBatch } from "../../../agents/auth-profiles/upsert-with-lock.js";
 import { resolveProviderUseAdmission } from "../../../agents/provider-model-auth-source-plan.js";
 import {
   loadSessionEntry,
@@ -22,6 +23,7 @@ import {
 import {
   completeProviderUseBindingMigration,
   prepareProviderUseBindingMigration,
+  revalidateProviderUseBindingMigration,
 } from "./provider-use-binding-migration.js";
 
 vi.mock("./active-tool-schema-warnings.js", () => ({
@@ -87,6 +89,92 @@ function admitted(config: OpenClawConfig) {
 }
 
 describe("selected shared-provider upgrade", () => {
+  it("keeps a newly selected shared-key fallback pending at the write recheck", async () => {
+    const prepared = await prepare(selectedPlan);
+    assert(prepared.bindings);
+    const config = structuredClone(prepared.config);
+    config.agents = {
+      ...config.agents,
+      defaults: {
+        model: {
+          primary: "byteplus-plan/ark-code-latest",
+          fallbacks: ["volcengine-plan/ark-code-latest"],
+        },
+      },
+    };
+    const checked = await revalidateProviderUseBindingMigration({
+      config,
+      configPath: state.configPath,
+      env: state.env,
+      bindings: prepared.bindings,
+    });
+    expect(checked.pending).toBe(false);
+    expect(checked.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
+    expect(checked.config.models?.providers?.["volcengine-plan"]).toBeUndefined();
+    expect(checked.warnings.join("\n")).toContain("volcengine-plan");
+  });
+
+  it("leaves completion open when one selected service key is missing despite another repair", async () => {
+    const config: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: {
+            primary: "byteplus-plan/ark-code-latest",
+            fallbacks: ["volcengine-plan/ark-code-latest"],
+          },
+        },
+        entries: { main: {} },
+      },
+    };
+    const result = await prepareProviderUseBindingMigration({
+      config,
+      configPath: state.configPath,
+      env: { ...state.env, BYTEPLUS_API_KEY: undefined },
+    });
+    expect(result.pending).toBe(false);
+    expect(result.config.models?.providers?.["byteplus-plan"]).toBeUndefined();
+    expect(result.config.models?.providers?.["volcengine-plan"]?.apiKey).toEqual({
+      source: "env",
+      provider: "default",
+      id: "VOLCANO_ENGINE_API_KEY",
+    });
+    expect(result.warnings?.join("\n")).toContain("BYTEPLUS_API_KEY");
+  });
+
+  it.each(["main", "other", "shared"])(
+    "does not replace a saved family account in the %s scope with an env binding",
+    async (scope) => {
+      const profileId = "byteplus:saved-account";
+      await persistAuthProfileBatch({
+        stateDir: state.stateDir,
+        ...(scope === "shared" ? {} : { agentDir: state.agentDir(scope) }),
+        profiles: [
+          {
+            profileId,
+            credential: { type: "api_key", provider: "byteplus", key: "saved-account-key" },
+          },
+        ],
+      });
+
+      const result = await prepare(selectedPlan);
+
+      expect(result.config).toBe(selectedPlan);
+      expect(result.changes).toEqual([]);
+      expect(result.pending).toBe(false);
+      expect(result.warnings?.join("\n")).toContain("byteplus-plan");
+      expect(result.warnings?.join("\n")).toContain(profileId);
+      expect(result.warnings?.join("\n")).not.toContain("saved-account-key");
+      expect((await prepare(selectedPlan)).changes).toEqual([]);
+      const withoutEnv = await prepareProviderUseBindingMigration({
+        config: selectedPlan,
+        configPath: state.configPath,
+        env: { ...state.env, BYTEPLUS_API_KEY: undefined },
+      });
+      expect(withoutEnv.config).toBe(selectedPlan);
+      expect(withoutEnv.warnings?.join("\n")).toContain(profileId);
+    },
+  );
+
   it.each([true, false])(
     "defers a conflicting local account without losing safe bindings (owner selects it: %s)",
     async (ownerSelectsProvider) => {
@@ -218,7 +306,7 @@ describe("selected shared-provider upgrade", () => {
     expect(loadSessionEntry(scope)).toEqual(before);
   });
 
-  it("does not treat another agent's inactive setup replacement as an account conflict", async () => {
+  it("preserves another agent's inactive saved account before materializing an env binding", async () => {
     const config: OpenClawConfig = {
       agents: {
         entries: {
@@ -242,9 +330,10 @@ describe("selected shared-provider upgrade", () => {
 
     const result = await prepare(config);
 
-    expect(result.pending).toBe(true);
-    expect(result.warnings).toBeUndefined();
-    expect(result.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
+    expect(result.pending).toBe(false);
+    expect(result.warnings?.join("\n")).toContain("byteplus-plan:replacement");
+    expect(result.config).toBe(config);
+    expect(result.changes).toEqual([]);
     expect(
       loadAuthProfileStoreForRuntime(
         state.agentDir("alpha"),
@@ -607,6 +696,41 @@ describe("selected shared-provider upgrade", () => {
 });
 
 describe("Doctor provider-binding write composition", () => {
+  it("keeps an unevaluated service-environment selection open until its key is visible", async () => {
+    const { prepareDoctorContext } = await import("../../doctor-config-flow.test-support.js");
+    const { runWriteConfigHealth } =
+      await import("../../../flows/doctor-health-contribution-runners.config.js");
+    await state.writeConfig(selectedPlan);
+    vi.stubEnv("BYTEPLUS_API_KEY", undefined);
+    const absent = await prepareProviderUseBindingMigration({
+      config: selectedPlan,
+      configPath: state.configPath,
+      env: { ...state.env, BYTEPLUS_API_KEY: undefined },
+    });
+    const shellDoctor = await prepareDoctorContext(state.configPath);
+    await runWriteConfigHealth(shellDoctor, { runPostWriteRepairs: false });
+
+    vi.stubEnv("BYTEPLUS_API_KEY", state.env.BYTEPLUS_API_KEY);
+    const retry = await prepare(selectedPlan);
+    expect(retry.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
+    expect(absent.pending).toBe(false);
+    expect(absent.warnings?.join("\n")).toContain("BYTEPLUS_API_KEY");
+    expect(absent.warnings?.join("\n")).toContain("service environment");
+    const serviceDoctor = await prepareDoctorContext(state.configPath);
+    await runWriteConfigHealth(serviceDoctor, { runPostWriteRepairs: false });
+    const written = await fs.readFile(state.configPath, "utf8");
+    expect(JSON.parse(written).models.providers["byteplus-plan"]).toEqual({ apiKey: byteplusRef });
+
+    const third = await prepareDoctorContext(state.configPath);
+    await runWriteConfigHealth(third, { runPostWriteRepairs: false });
+    expect(await fs.readFile(state.configPath, "utf8")).toBe(written);
+    expect(await prepare(selectedPlan)).toEqual({
+      config: selectedPlan,
+      changes: [],
+      pending: false,
+    });
+  });
+
   it.each([false, true])(
     "persists a primary Plan binding and later repair fields: %s",
     async (laterRepair) => {

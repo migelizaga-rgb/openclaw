@@ -33,7 +33,7 @@ Auth env var: `STEPFUN_API_KEY`
 
 This variable is shared by StepFun provider identities. Run onboarding or declare
 the intended `models.providers` entry before making model requests. For existing
-selections, `openclaw doctor --fix` applies the one-time
+selections, Gateway startup and `openclaw doctor --fix` apply the same one-time
 [shared-key upgrade](/concepts/model-providers).
 
 ## Built-in catalog

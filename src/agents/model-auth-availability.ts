@@ -72,11 +72,13 @@ import { resolveManagedSecretRefRuntimeProviderAuth } from "./model-auth-runtime
 import { hasAuthoredProviderRequestParams } from "./model-extra-params.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import { resolveCliRuntimeExecutionProvider } from "./model-runtime-aliases.js";
+import { resolveSelectedModelProviderIds } from "./model-selection-config.js";
 import {
   createOpenAIModelRoutesResolver,
   resolveConfiguredOpenAIAuthMode,
   selectOpenAIModelRouteAuth,
 } from "./openai-model-routes.js";
+import { resolveProviderAuthAliasMap } from "./provider-auth-aliases.js";
 import {
   buildProviderModelAuthDirectSource,
   buildProviderModelAuthSourcePlan,
@@ -414,6 +416,17 @@ export function createModelAuthAvailabilityResolver(
     config: params.cfg,
     env,
     profiles: store.profiles,
+    requestedProviders: resolveSelectedModelProviderIds({
+      cfg: params.cfg,
+      agentId: params.agentId,
+    }),
+    storedCredentialAuthAliases: resolveProviderAuthAliasMap({
+      config: params.cfg,
+      env,
+      workspaceDir: params.workspaceDir,
+      metadataSnapshot: params.metadataSnapshot,
+      storedCredential: true,
+    }),
     nativeProviders: Object.entries(params.preparedRuntimeAuthModes ?? {}).flatMap(
       ([provider, mode]) =>
         typeof mode === "object" && mode.source === "native" ? [provider] : [],
@@ -509,14 +522,22 @@ export function createModelAuthAvailabilityResolver(
     }
     const ordered = resolveAuthProfileOrderWithMetadata({
       cfg: readOnlyAuthConfig,
+      authAliasLookupParams: {
+        config: params.cfg,
+        env,
+        workspaceDir: params.workspaceDir,
+        metadataSnapshot: params.metadataSnapshot,
+      },
       store: orderStore,
       provider: normalized,
       preferredProfile: preferredProfileId,
       forModel,
       readinessMode: "read-only",
     });
+    const binding = admitted.get(normalized);
     const resolution = prependAuthProfilePin(
-      admitted.get(normalized)?.kind === "profile"
+      binding?.kind === "profile" &&
+        normalizeProviderId(orderStore.profiles[binding.profileId]?.provider ?? "") === normalized
         ? {
             ...ordered,
             profileIds: ordered.profileIds.filter((id) => {

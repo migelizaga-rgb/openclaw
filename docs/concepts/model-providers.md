@@ -45,11 +45,21 @@ Unique provider keys such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and
 or setting `discovery.enabled: true` does not grant credential use. Discovery
 settings only control catalog discovery; public catalogs remain browsable.
 
-When upgrading, run `openclaw doctor --fix` once to preserve existing shared-key
-selections. Doctor adds an env SecretRef for a provider selected as a primary,
-fallback, or user-pinned session model. It names the variable and provider in its
-notice, never the key value. It does not enroll unselected siblings or use generic
-credentials. Later selections need their own explicit binding.
+On upgrade, Gateway startup and `openclaw doctor --fix` use the same one-time
+repair for existing shared-key selections. The repair adds an env SecretRef for
+a provider selected as a primary, fallback, or user-pinned session model only
+when no saved account for that provider or its family exists in any auth scope.
+Saved accounts keep their credential and ordered fallback through the provider's
+authentication alias for the selected route. The repair names conflicting
+profiles so the operator can bind them explicitly; it never writes an env
+reference over a saved account. Notices name variables and providers, never key
+values. Unselected siblings and generic credentials are excluded. Later
+environment-key selections need their own explicit binding.
+
+If Doctor cannot see a selected provider's shared-key variable, it leaves the
+upgrade open and names the missing variable. Rerun Doctor from the service
+environment or with that variable set. A later Gateway startup can finish the
+same repair using the service's environment.
 
 ## Where each section moved
 

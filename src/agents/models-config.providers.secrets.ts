@@ -196,7 +196,8 @@ export function createProviderApiKeyResolver(
 ): ProviderApiKeyResolver {
   const getLookupCaches = createProviderAuthLookupCaches(env, config, admission);
   return (provider: string) => {
-    const profileBound = admission?.get(normalizeProviderId(provider))?.kind === "profile";
+    const binding = admission?.get(normalizeProviderId(provider));
+    const profileBound = binding?.kind === "profile";
     const lookupCaches = getLookupCaches();
     const authProvider = resolveProviderIdForAuthFromCaches(provider, lookupCaches);
     const envVar = profileBound
@@ -246,6 +247,8 @@ export function createProviderApiKeyResolver(
         const credential = authStore.profiles[id];
         return (
           !profileBound ||
+          normalizeProviderId(authStore.profiles[binding.profileId]?.provider ?? "") !==
+            normalizeProviderId(provider) ||
           (credential && normalizeProviderId(credential.provider) === normalizeProviderId(provider))
         );
       }),
@@ -273,7 +276,8 @@ export function createProviderAuthResolver(
 ): ProviderAuthResolver {
   const getLookupCaches = createProviderAuthLookupCaches(env, config, admission);
   return (provider, options) => {
-    const profileBound = admission?.get(normalizeProviderId(provider))?.kind === "profile";
+    const binding = admission?.get(normalizeProviderId(provider));
+    const profileBound = binding?.kind === "profile";
     const lookupCaches = getLookupCaches();
     const authProvider = resolveProviderIdForAuthFromCaches(provider, lookupCaches);
     const authStore = resolveAuthProfileStoreInput(authStoreInput);
@@ -291,6 +295,8 @@ export function createProviderAuthResolver(
       const cred = authStore.profiles[id];
       if (
         profileBound &&
+        normalizeProviderId(authStore.profiles[binding.profileId]?.provider ?? "") ===
+          normalizeProviderId(provider) &&
         (!cred || normalizeProviderId(cred.provider) !== normalizeProviderId(provider))
       ) {
         continue;

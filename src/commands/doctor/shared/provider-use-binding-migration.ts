@@ -1,26 +1,25 @@
+import { isDeepStrictEqual } from "node:util";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { listAgentIds } from "../../../agents/agent-scope-config.js";
-import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "../../../agents/agent-scope.js";
+import { resolveAgentDir } from "../../../agents/agent-scope.js";
 import { loadAuthProfileStoreForRuntime } from "../../../agents/auth-profiles.js";
 import {
   listCandidateAuthProfileStores,
   loadCandidateAuthProfileStore,
-  type CandidateAuthProfileStore,
 } from "../../../agents/auth-profiles/candidate-stores.js";
+import { loadPersistedAuthProfileStoreAtDatabasePath } from "../../../agents/auth-profiles/persisted.js";
 import type { AuthProfileStore } from "../../../agents/auth-profiles/types.js";
-import { resolveDefaultModelForAgent } from "../../../agents/model-selection-config.js";
-import { resolveConfiguredModelFallbacks } from "../../../agents/model-selection-resolve.js";
+import { resolveSelectedModelProviderIds } from "../../../agents/model-selection-config.js";
 import {
-  buildModelAliasIndex,
-  resolveModelRefFromString,
-} from "../../../agents/model-selection-shared.js";
-import { resolveProviderUseAdmission } from "../../../agents/provider-model-auth-source-plan.js";
+  isGenericProviderCredentialEnvVar,
+  resolveProviderUseAdmission,
+} from "../../../agents/provider-model-auth-source-plan.js";
 import { resolveResetPreservedSelection } from "../../../config/sessions/reset-preserved-selection.js";
 import { scanDoctorSessionEntriesTolerant } from "../../../config/sessions/session-accessor.js";
 import type { ModelProviderConfigInput } from "../../../config/types.models.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { parseEnvTemplateSecretRef } from "../../../config/types.secrets.js";
+import { parseEnvTemplateSecretRef, type SecretRef } from "../../../config/types.secrets.js";
 import { validateConfigObjectRaw } from "../../../config/validation-core.js";
 import {
   readLegacyMigrationReceiptFromDatabase,
@@ -33,6 +32,7 @@ import {
 } from "../../../secrets/provider-env-vars.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../../../state/openclaw-state-db-readonly.js";
 import { runOpenClawStateWriteTransaction } from "../../../state/openclaw-state-db.js";
+import { resolveOpenClawStateSqlitePath } from "../../../state/openclaw-state-db.paths.js";
 import { listExistingAgentDatabaseTargets } from "../../doctor-session-sqlite-readers.js";
 import { selectedCanonicalModelRefsForRuntimePolicy } from "./legacy-runtime-model-policy.js";
 
@@ -51,6 +51,7 @@ export async function prepareProviderUseBindingMigration(params: {
   pending: boolean;
   warnings?: string[];
   unsetPaths?: string[][];
+  bindings?: Record<string, SecretRef>;
 }> {
   const { config, configPath, env } = params;
   const unchanged = { config, changes: [], pending: false };
@@ -65,7 +66,7 @@ export async function prepareProviderUseBindingMigration(params: {
   let envCandidateMap: Readonly<Record<string, readonly string[]>>;
   let aliasMap: Readonly<Record<string, string>>;
   const authScopes = new Map<string, { agentDir: string; store: AuthProfileStore }>();
-  const localAccounts: Array<CandidateAuthProfileStore & { store: AuthProfileStore }> = [];
+  const accountScopes: Array<{ owner: string; store: AuthProfileStore }> = [];
   // Receipts and session pins are external state. A failed read must not turn an
   // incomplete selection snapshot into a completed upgrade or prevent startup.
   try {
@@ -76,10 +77,18 @@ export async function prepareProviderUseBindingMigration(params: {
     if (completed) {
       return unchanged;
     }
-    for (const candidate of await listCandidateAuthProfileStores({ cfg: config, env })) {
+    const candidates = await listCandidateAuthProfileStores({ cfg: config, env });
+    const sharedStore = loadPersistedAuthProfileStoreAtDatabasePath(
+      resolveOpenClawStateSqlitePath(env),
+      "shared-state",
+    );
+    if (sharedStore) {
+      accountScopes.push({ owner: "shared", store: sharedStore });
+    }
+    for (const candidate of candidates) {
       const store = loadCandidateAuthProfileStore(candidate);
       if (store) {
-        localAccounts.push({ ...candidate, store });
+        accountScopes.push({ owner: candidate.agentId, store });
       }
     }
     let incompletePins = false;
@@ -142,37 +151,7 @@ export async function prepareProviderUseBindingMigration(params: {
   }
   const selectedProviders = new Map<string, Set<string>>();
   for (const agentId of authScopes.keys()) {
-    const selected = new Set<string>();
-    selectedProviders.set(agentId, selected);
-    const selection = {
-      cfg: config,
-      agentId,
-      allowManifestNormalization: false,
-      allowPluginNormalization: false,
-    };
-    const primary = resolveDefaultModelForAgent(selection);
-    const rawPrimary = resolveAgentEffectiveModelPrimary(config, agentId);
-    if (rawPrimary) {
-      selected.add(normalizeProviderId(primary.provider));
-    }
-    const aliasIndex = buildModelAliasIndex({
-      ...selection,
-      defaultProvider: primary.provider,
-    });
-    for (const raw of resolveConfiguredModelFallbacks(selection)) {
-      if (typeof raw !== "string") {
-        continue;
-      }
-      const resolved = resolveModelRefFromString({
-        ...selection,
-        raw,
-        defaultProvider: primary.provider,
-        aliasIndex,
-      });
-      if (resolved) {
-        selected.add(normalizeProviderId(resolved.ref.provider));
-      }
-    }
+    selectedProviders.set(agentId, resolveSelectedModelProviderIds({ cfg: config, agentId }));
   }
   const manifestVariables = new Set(Object.values(direct).flat());
   const admissions = new Map(
@@ -186,62 +165,82 @@ export async function prepareProviderUseBindingMigration(params: {
       }),
     ]),
   );
-  const accountBindings = localAccounts.map((scope) => ({
-    agentId: scope.agentId,
-    admitted: resolveProviderUseAdmission({ profiles: scope.store.profiles }),
-  }));
   const providers: Record<string, ModelProviderConfigInput> = {};
+  const bindings: Record<string, SecretRef> = {};
   const changes: string[] = [];
   const warnings: string[] = [];
   for (const [identity, candidates] of Object.entries(envCandidateMap)) {
     const provider = normalizeProviderId(identity);
-    const missingAgents = [...selectedProviders]
+    const selectedAgents = [...selectedProviders]
       .filter(
         ([agentId, selected]) =>
-          !admissions.get(agentId)?.has(provider) &&
-          (selected.has(provider) ||
-            sessionSelections.some(
-              (selection) =>
-                selection.agentId === agentId &&
-                selectedCanonicalModelRefsForRuntimePolicy(selection.model, provider).length > 0,
-            )),
+          selected.has(provider) ||
+          sessionSelections.some(
+            (selection) =>
+              selection.agentId === agentId &&
+              selectedCanonicalModelRefsForRuntimePolicy(selection.model, provider).length > 0,
+          ),
       )
       .map(([agentId]) => agentId);
     if (
       (!Object.hasOwn(direct, identity) && !Object.hasOwn(aliasMap, identity)) ||
-      missingAgents.length === 0
+      selectedAgents.length === 0
     ) {
       continue;
     }
-    const variable = candidates.find(
+    const sharedVariables = candidates.filter(
       (name) =>
         manifestVariables.has(name) &&
-        // The admission owner excludes generic credentials even if a manifest names one.
-        resolveProviderUseAdmission({ env, providerEnvVars: { [provider]: [name] } }).has(
-          provider,
-        ) &&
+        !isGenericProviderCredentialEnvVar(name) &&
         Object.entries(envCandidateMap).some(
           ([sibling, names]) => normalizeProviderId(sibling) !== provider && names.includes(name),
         ),
     );
+    if (sharedVariables.length === 0) {
+      continue;
+    }
+    const variable = sharedVariables.find((name) => env[name]?.trim());
+    if (!variable) {
+      warnings.push(
+        `Could not evaluate the shared-key upgrade for provider ${provider}: ${sharedVariables.join(", ")} is not set. Rerun "openclaw doctor --fix" from the service environment or with a candidate variable set.`,
+      );
+    }
+    const missingAgents = selectedAgents.filter(
+      (agentId) => !admissions.get(agentId)?.has(provider),
+    );
+    if (missingAgents.length === 0) {
+      continue;
+    }
+    const credentialProvider = aliasMap[provider] ?? provider;
+    const accountOwners = new Set<string>();
+    const conflictingProfiles = new Set<string>();
+    for (const { owner, store } of accountScopes) {
+      for (const [profileId, profile] of Object.entries(store.profiles)) {
+        const storedProvider = normalizeProviderId(profile.provider);
+        if (
+          storedProvider === provider ||
+          (aliasMap[storedProvider] ?? storedProvider) === credentialProvider ||
+          (envCandidateMap[storedProvider] ?? []).some(
+            (name) => manifestVariables.has(name) && candidates.includes(name),
+          )
+        ) {
+          accountOwners.add(owner);
+          conflictingProfiles.add(profileId);
+        }
+      }
+    }
+    if (conflictingProfiles.size > 0) {
+      warnings.push(
+        `Provider ${provider} was not migrated for agents ${missingAgents.join(", ")}: a global env binding could replace an existing account for agents ${[...accountOwners].join(", ")} (profiles ${[...conflictingProfiles].join(", ")}). Bind the provider explicitly to the saved account, then rerun "openclaw doctor --fix".`,
+      );
+      continue;
+    }
     const apiKey = variable ? parseEnvTemplateSecretRef(`\${${variable}}`, envProvider) : null;
     if (!apiKey) {
       continue;
     }
-    const accountOwners = [
-      ...new Set(
-        accountBindings
-          .filter((scope) => scope.admitted.has(provider))
-          .map((scope) => scope.agentId),
-      ),
-    ];
-    if (accountOwners.length > 0) {
-      warnings.push(
-        `Provider ${provider} was not migrated for agents ${missingAgents.join(", ")}: a global env binding would replace an existing account for agents ${accountOwners.join(", ")}. Configure the missing agents explicitly, then rerun "openclaw doctor --fix".`,
-      );
-      continue;
-    }
     providers[provider] = { apiKey };
+    bindings[provider] = apiKey;
     changes.push(`Bound selected provider ${provider} to ${variable} with an env SecretRef.`);
   }
   if (changes.length === 0) {
@@ -267,11 +266,109 @@ export async function prepareProviderUseBindingMigration(params: {
       },
     },
     changes,
+    bindings,
     pending: warnings.length === 0,
     ...(warnings.length ? { warnings } : {}),
     // Doctor consumes materialized config; its writer preserves the sparse source overlay.
     unsetPaths: Object.keys(providers).flatMap((provider) =>
       ["baseUrl", "models"].map((field) => ["models", "providers", provider, field]),
+    ),
+  };
+}
+
+/** Carry only approved migration work into Doctor's delayed config writer. */
+export function resolveProviderUseBindingWriteMetadata(
+  migration: Awaited<ReturnType<typeof prepareProviderUseBindingMigration>>,
+  options: { shouldWriteConfig: boolean; shouldRepair: boolean; blocksWrite?: boolean },
+) {
+  return {
+    ...(options.shouldWriteConfig && migration.bindings
+      ? { providerUseBindings: migration.bindings }
+      : {}),
+    ...(options.shouldWriteConfig && migration.unsetPaths
+      ? { unsetPaths: migration.unsetPaths }
+      : {}),
+    ...(migration.pending &&
+    options.blocksWrite !== true &&
+    (options.shouldWriteConfig || (options.shouldRepair && migration.changes.length === 0))
+      ? { providerUseBindingMigrationPending: true }
+      : {}),
+  };
+}
+
+/** Recheck proposed bindings after interactive or asynchronous repairs, before persistence. */
+export async function revalidateProviderUseBindingMigration(params: {
+  config: OpenClawConfig;
+  sourceConfig?: OpenClawConfig;
+  configPath: string;
+  env: NodeJS.ProcessEnv;
+  bindings: Readonly<Record<string, SecretRef>>;
+}) {
+  const config = structuredClone(params.config);
+  for (const [provider, apiKey] of Object.entries(params.bindings)) {
+    const persisted = params.sourceConfig?.models?.providers?.[provider];
+    if (
+      persisted &&
+      config.models?.providers &&
+      isDeepStrictEqual(config.models.providers[provider]?.apiKey, apiKey)
+    ) {
+      config.models.providers[provider] = structuredClone(persisted);
+    }
+  }
+  const analysis = structuredClone(config);
+  const proposed = Object.entries(params.bindings).filter(
+    ([provider, apiKey]) =>
+      !params.sourceConfig?.models?.providers?.[provider] &&
+      isDeepStrictEqual(config.models?.providers?.[provider]?.apiKey, apiKey),
+  );
+  for (const [provider] of proposed) {
+    delete analysis.models?.providers?.[provider];
+  }
+  const checked = await prepareProviderUseBindingMigration({ ...params, config: analysis });
+  const bindings: Record<string, SecretRef> = {};
+  for (const [provider, apiKey] of proposed) {
+    if (isDeepStrictEqual(checked.bindings?.[provider], apiKey)) {
+      bindings[provider] = apiKey;
+      continue;
+    }
+    const entry = config.models?.providers?.[provider];
+    if (entry) {
+      delete entry.apiKey;
+      const authoredFields = Object.entries(entry).filter(
+        ([key, value]) =>
+          !(key === "baseUrl" && value === "") &&
+          !(key === "models" && Array.isArray(value) && value.length === 0),
+      );
+      if (authoredFields.length === 0) {
+        delete config.models?.providers?.[provider];
+      }
+    }
+  }
+  if (config.models?.providers && Object.keys(config.models.providers).length === 0) {
+    delete config.models.providers;
+    if (Object.keys(config.models).length === 0) {
+      delete config.models;
+    }
+  }
+  const deferred = Object.keys(checked.bindings ?? {}).filter(
+    (provider) => !Object.hasOwn(bindings, provider),
+  );
+  return {
+    config,
+    bindings,
+    pending:
+      checked.pending && Object.keys(bindings).length === proposed.length && deferred.length === 0,
+    warnings: [
+      ...(checked.warnings ?? []),
+      ...(deferred.length
+        ? [
+            `Selected providers ${deferred.join(", ")} still need binding; rerun "openclaw doctor --fix".`,
+          ]
+        : []),
+    ],
+    changes: Object.entries(bindings).map(
+      ([provider, apiKey]) =>
+        `Bound selected provider ${provider} to ${apiKey.id} with an env SecretRef.`,
     ),
   };
 }

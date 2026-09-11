@@ -3,6 +3,7 @@ import type { probeGatewayMemoryStatus } from "../commands/doctor-gateway-health
 import type { DoctorOptions, DoctorPrompter } from "../commands/doctor-prompter.js";
 import type { ShippedPluginInstallConfigImport } from "../commands/doctor/shared/plugin-registry-migration.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { SecretRef } from "../config/types.secrets.js";
 import type { buildGatewayConnectionDetails } from "../gateway/call.js";
 import type {
   LegacyStateMigrationStepReceipt,
@@ -35,6 +36,7 @@ type DoctorConfigResult = {
   shouldRepairCronCodexModelRefsAfterConfigWrite?: boolean;
   retiredPhoneControlStateCleanupPending?: boolean;
   providerUseBindingMigrationPending?: boolean;
+  providerUseBindings?: Record<string, SecretRef>;
   /** Store cleanup deferred until the repaired config reaches disk. */
   retiredAuthProfileCleanupPlans?: readonly RetiredAuthProfileCleanupPlan[];
   blockedCodexModelIdentities?: readonly string[];

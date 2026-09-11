@@ -15,8 +15,188 @@ const sharedProviderEnvVars = {
   opencode: ["OPENCODE_API_KEY"],
   "opencode-go": ["OPENCODE_API_KEY"],
 };
+const byteplusMetadataSnapshot = createPluginMetadataSnapshotFixture({
+  plugins: [
+    {
+      id: "byteplus",
+      providers: ["byteplus", "byteplus-plan"],
+      setup: { providers: [{ id: "byteplus", envVars: ["BYTEPLUS_API_KEY"] }] },
+      providerAuthAliases: { "byteplus-plan": "byteplus" },
+    },
+  ],
+});
 
 describe("resolveProviderUseAdmission", () => {
+  it("binds only a requested sibling to its saved credential realm", () => {
+    expect(
+      resolveProviderUseAdmission({
+        env: { BYTEPLUS_API_KEY: "environment-account" },
+        providerEnvVars: { byteplus: ["BYTEPLUS_API_KEY"] },
+        profiles: { "byteplus:saved": { provider: "byteplus" } },
+        requestedProviders: ["byteplus-plan"],
+        storedCredentialAuthAliases: { "byteplus-plan": "byteplus", "byteplus-other": "byteplus" },
+      }),
+    ).toEqual(
+      new Map([
+        ["byteplus", { kind: "profile", profileId: "byteplus:saved" }],
+        ["byteplus-plan", { kind: "profile", profileId: "byteplus:saved" }],
+      ]),
+    );
+  });
+
+  it.each(["primary", "fallback", "alias"])(
+    "preserves the saved account for a %s-selected Plan instead of its environment key",
+    (selection) => {
+      const config: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model:
+              selection === "fallback"
+                ? { primary: "byteplus/base-model", fallbacks: ["byteplus-plan/plan-model"] }
+                : { primary: selection === "alias" ? "plan" : "byteplus-plan/plan-model" },
+            models: { "byteplus-plan/plan-model": { alias: "plan" } },
+          },
+        },
+      };
+      const env = { BYTEPLUS_API_KEY: "environment-account" };
+      const authProfileStore: AuthProfileStore = {
+        version: 1,
+        profiles: {
+          "byteplus:saved": { type: "api_key", provider: "byteplus", key: "saved-account" },
+        },
+      };
+      const metadataSnapshot = byteplusMetadataSnapshot;
+      expect(
+        prepareAgentRuntimeAuth({
+          provider: "byteplus-plan",
+          modelId: "plan-model",
+          config,
+          env,
+          authProfileStore,
+          metadataSnapshot,
+        }).attempts,
+      ).toMatchObject([{ kind: "profile", profileId: "byteplus:saved" }]);
+      expect(
+        createModelAuthAvailabilityResolver({
+          cfg: config,
+          env,
+          authStore: authProfileStore,
+          metadataSnapshot,
+        }).resolveProviderAuthAvailability("byteplus-plan"),
+      ).toBe(true);
+      const admission = resolveProviderUseAdmission({
+        config,
+        env,
+        profiles: authProfileStore.profiles,
+        requestedProviders: ["byteplus-plan"],
+        storedCredentialAuthAliases: { "byteplus-plan": "byteplus" },
+      });
+      expect(
+        createProviderApiKeyResolver(
+          env,
+          authProfileStore,
+          config,
+          undefined,
+          undefined,
+          env,
+          admission,
+        )("byteplus-plan").discoveryApiKey,
+      ).toBe("saved-account");
+      expect(
+        createProviderAuthResolver(
+          env,
+          authProfileStore,
+          config,
+          undefined,
+          undefined,
+          env,
+          admission,
+        )("byteplus-plan"),
+      ).toMatchObject({ profileId: "byteplus:saved", source: "profile" });
+    },
+  );
+
+  it.each(["absent", "inactive", "expired"])(
+    "does not replace an %s family account with an environment key for a selected Plan",
+    (state) => {
+      const authProfileStore: AuthProfileStore = {
+        version: 1,
+        profiles:
+          state === "absent"
+            ? {}
+            : {
+                "byteplus:saved":
+                  state === "expired"
+                    ? { type: "token", provider: "byteplus", token: "expired-account", expires: 1 }
+                    : {
+                        type: "api_key",
+                        provider: "byteplus",
+                        key: "inactive-account",
+                        setup: {
+                          replacement: true,
+                          modelRef: "byteplus-plan/plan-model",
+                          configJson: "{}",
+                        },
+                      },
+              },
+      };
+      expect(() =>
+        prepareAgentRuntimeAuth({
+          provider: "byteplus-plan",
+          modelId: "plan-model",
+          config: {},
+          env: { BYTEPLUS_API_KEY: "environment-account" },
+          authProfileStore,
+          metadataSnapshot: byteplusMetadataSnapshot,
+        }),
+      ).toThrow(
+        state === "expired" ? "No usable bound auth profile" : "not configured for model use",
+      );
+    },
+  );
+
+  it("keeps exact-provider saved accounts ahead of family accounts", () => {
+    const authProfileStore: AuthProfileStore = {
+      version: 1,
+      profiles: {
+        "byteplus:family": { type: "api_key", provider: "byteplus", key: "family-account" },
+        "byteplus-plan:saved": { type: "api_key", provider: "byteplus-plan", key: "plan-account" },
+      },
+    };
+    const prepared = prepareAgentRuntimeAuth({
+      provider: "byteplus-plan",
+      modelId: "plan-model",
+      config: {},
+      env: { BYTEPLUS_API_KEY: "environment-account" },
+      authProfileStore,
+      metadataSnapshot: byteplusMetadataSnapshot,
+    });
+    expect(prepared.attempts.map((attempt) => attempt.profileId)).toEqual(["byteplus-plan:saved"]);
+  });
+
+  it("retains saved family account order and fallback without adding an environment attempt", () => {
+    const authProfileStore: AuthProfileStore = {
+      version: 1,
+      profiles: {
+        "byteplus:first": { type: "api_key", provider: "byteplus", key: "first-account" },
+        "byteplus:second": { type: "api_key", provider: "byteplus", key: "second-account" },
+      },
+      order: { byteplus: ["byteplus:second", "byteplus:first"] },
+    };
+    const prepared = prepareAgentRuntimeAuth({
+      provider: "byteplus-plan",
+      modelId: "plan-model",
+      config: {},
+      env: { BYTEPLUS_API_KEY: "environment-account" },
+      authProfileStore,
+      metadataSnapshot: byteplusMetadataSnapshot,
+    });
+    expect(prepared.attempts.map((attempt) => attempt.profileId)).toEqual([
+      "byteplus:second",
+      "byteplus:first",
+    ]);
+  });
+
   it("keeps the environment account until a saved replacement is activated", async () => {
     const profileId = "anthropic:replacement";
     const env = { ANTHROPIC_API_KEY: "current-environment-key" };

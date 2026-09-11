@@ -75,17 +75,25 @@ beyond the grace period.
 
     Active migrations:
 
-    - Shared model-provider credentials: Doctor preserves only providers selected
+    - Shared model-provider credentials: Doctor and Gateway startup preserve only providers selected
       by a primary model, configured fallback, or persisted user session pin. It
       writes an env SecretRef under `models.providers.<id>` when a shared-family
-      key previously supplied that unbound identity. Existing bound accounts take
-      precedence. Unselected siblings and generic credentials are excluded. A
-      receipt closes this one-time upgrade after a successful Doctor pass; later
+      key previously supplied that unbound identity. Any saved account for that
+      provider or its family, in shared or agent-local storage, blocks an env
+      binding. The notice names the provider and saved profiles so the operator
+      can bind the account explicitly. Selected routes keep their existing saved
+      account through the provider's authentication alias. Unselected siblings
+      and generic credentials are excluded. A
+      receipt closes this one-time upgrade after successful persistence; later
       model selections need an explicit binding. Unreadable upgrade state leaves
       config unchanged and asks for another Doctor run. If a global binding would
       replace another agent's account, Doctor preserves that account, warns which
       agent still needs authentication, and leaves the upgrade open. Independent
-      safe bindings still proceed. The provider overlay contains
+      safe bindings still proceed. A missing shared-key variable also leaves
+      the upgrade open. The warning names the variable and asks you to rerun
+      Doctor from the service environment or with that variable set. Gateway
+      startup can finish the same repair using its service environment.
+      The provider overlay contains
       only the credential reference; bundled catalog defaults stay with the provider:
 
       ```json5

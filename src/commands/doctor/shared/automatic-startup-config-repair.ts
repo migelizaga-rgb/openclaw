@@ -128,8 +128,9 @@ export function isStartupConfigRepairResult(
 
 /** Commits a planned repair against the exact snapshot admitted by its caller. */
 export async function commitAutomaticConfigRepair(
-  plan: AutomaticConfigRepairPlan,
+  plan: Pick<AutomaticConfigRepairPlan, "config">,
   snapshot: ConfigFileSnapshot,
+  unsetPaths?: string[][],
 ): Promise<void> {
   await transformConfigFile({
     baseHash: resolveConfigSnapshotHash(snapshot) ?? undefined,
@@ -144,6 +145,7 @@ export async function commitAutomaticConfigRepair(
       auditOrigin: "doctor",
       skipOutputLogs: true,
       skipRuntimeSnapshotRefresh: true,
+      ...(unsetPaths ? { unsetPaths } : {}),
       // The reader retired legacy markers; persist their canonical owners in this write.
       // Startup verification above uses the same writer topology preparation.
       persistCanonicalAgentRoster: true,

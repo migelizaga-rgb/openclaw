@@ -20,6 +20,10 @@ const GENERIC_CREDENTIAL_ENV_VARS = new Set([
   "GOOGLE_APPLICATION_CREDENTIALS",
 ]);
 
+export function isGenericProviderCredentialEnvVar(name: string): boolean {
+  return GENERIC_CREDENTIAL_ENV_VARS.has(name);
+}
+
 /** Provider intent is independent of credential readiness and catalog visibility. */
 export function resolveProviderUseAdmission(params: {
   config?: OpenClawConfig;
@@ -27,6 +31,9 @@ export function resolveProviderUseAdmission(params: {
   providerEnvVars?: Readonly<Record<string, readonly string[]>>;
   profiles?: Readonly<Record<string, Pick<AuthProfileCredential, "provider" | "setup">>>;
   nativeProviders?: Iterable<string>;
+  /** Selected routes may retain accounts through unconditional credential-family aliases. */
+  requestedProviders?: Iterable<string>;
+  storedCredentialAuthAliases?: Readonly<Record<string, string>>;
 }): ReadonlyMap<string, ProviderUseBinding> {
   const admitted = new Map<string, ProviderUseBinding>();
   const add = (provider: string, binding: ProviderUseBinding) => {
@@ -44,6 +51,23 @@ export function resolveProviderUseAdmission(params: {
     }
     add(profile.provider, { kind: "profile", profileId });
   }
+  for (const provider of params.requestedProviders ?? []) {
+    if (admitted.has(normalizeProviderId(provider))) {
+      continue;
+    }
+    const normalized = normalizeProviderId(provider);
+    const credentialProvider = params.storedCredentialAuthAliases?.[normalized] ?? normalized;
+    for (const [profileId, profile] of Object.entries(params.profiles ?? {})) {
+      if (
+        isSetupCredentialAccessible({ profileId, credential: profile }) &&
+        (params.storedCredentialAuthAliases?.[normalizeProviderId(profile.provider)] ??
+          normalizeProviderId(profile.provider)) === credentialProvider
+      ) {
+        add(provider, { kind: "profile", profileId });
+        break;
+      }
+    }
+  }
   for (const provider of params.nativeProviders ?? []) {
     add(provider, { kind: "native-account" });
   }
@@ -57,7 +81,7 @@ export function resolveProviderUseAdmission(params: {
   }
   const env = params.env ?? process.env;
   for (const [envVar, owners] of envOwners) {
-    if (owners.size !== 1 || GENERIC_CREDENTIAL_ENV_VARS.has(envVar) || !env[envVar]?.trim()) {
+    if (owners.size !== 1 || isGenericProviderCredentialEnvVar(envVar) || !env[envVar]?.trim()) {
       continue;
     }
     for (const provider of owners) {

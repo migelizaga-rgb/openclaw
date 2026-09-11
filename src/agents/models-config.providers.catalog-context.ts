@@ -3,6 +3,7 @@ import {
   normalizeProviderId,
 } from "@openclaw/model-catalog-core/provider-id";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type {
   ProviderCatalogOutcome,
   ProviderCatalogResult,
@@ -13,10 +14,56 @@ import {
 } from "../plugins/provider-discovery.js";
 import { matchesProviderPluginRef } from "../plugins/provider-registry-shared.js";
 import type { ProviderPlugin } from "../plugins/types.js";
+import { resolveProviderBindingEnvVarCandidates } from "../secrets/provider-env-vars.js";
 import { isTrustedSecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
+import { resolveRegisteredAgentIdForDir } from "./agent-dir-registry.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
+import { resolveSelectedModelProviderIds } from "./model-selection-config.js";
 import type { ProviderConfig } from "./models-config.providers.secret-helpers.js";
-import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
+import { resolveProviderAuthAliasMap, resolveProviderIdForAuth } from "./provider-auth-aliases.js";
+import { resolveProviderUseAdmission } from "./provider-model-auth-source-plan.js";
+
+/** Translate one catalog generation's source config and metadata into admission facts. */
+export function resolveCatalogProviderUseAdmission(params: {
+  config?: OpenClawConfig;
+  sourceConfigForSecrets?: OpenClawConfig;
+  env: NodeJS.ProcessEnv;
+  agentDir: string;
+  workspaceDir?: string;
+  profiles?: AuthProfileStore["profiles"];
+  pluginMetadataSnapshot?: Pick<PluginMetadataSnapshot, "manifestRegistry" | "owners">;
+}) {
+  const authAliasLookupParams = {
+    config: params.config,
+    env: params.env,
+    workspaceDir: params.workspaceDir,
+    metadataSnapshot: params.pluginMetadataSnapshot
+      ? {
+          plugins: params.pluginMetadataSnapshot.manifestRegistry.plugins,
+          owners: params.pluginMetadataSnapshot.owners,
+        }
+      : undefined,
+  };
+  return resolveProviderUseAdmission({
+    config: params.sourceConfigForSecrets ?? params.config,
+    env: params.env,
+    profiles: params.profiles,
+    requestedProviders: resolveSelectedModelProviderIds({
+      cfg: params.sourceConfigForSecrets ?? params.config ?? {},
+      agentId: resolveRegisteredAgentIdForDir(params.agentDir, params.env),
+    }),
+    storedCredentialAuthAliases: resolveProviderAuthAliasMap({
+      ...authAliasLookupParams,
+      storedCredential: true,
+    }),
+    providerEnvVars: resolveProviderBindingEnvVarCandidates({
+      config: params.config,
+      env: params.env,
+      workspaceDir: params.workspaceDir,
+      manifestPlugins: params.pluginMetadataSnapshot?.manifestRegistry.plugins,
+    }),
+  });
+}
 
 type CatalogContext = {
   config?: OpenClawConfig;
