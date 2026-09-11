@@ -1,7 +1,12 @@
 import { observeConfigSnapshot } from "./io.observe.js";
 import type { NormalizedConfigIoDeps, ReadConfigFileSnapshotInternalResult } from "./io.types.js";
 import { asResolvedSourceConfig, asRuntimeConfig } from "./materialize.js";
-import { setConfigResolutionFacts, type ConfigResolutionFacts } from "./resolution-facts.js";
+import {
+  getConfigProviderUseBindings,
+  setConfigProviderUseBindings,
+  setConfigResolutionFacts,
+  type ConfigResolutionFacts,
+} from "./resolution-facts.js";
 import type { ConfigFileSnapshot, LegacyConfigIssue, OpenClawConfig } from "./types.js";
 
 export function createConfigFileSnapshot(params: {
@@ -29,11 +34,14 @@ export function createConfigFileSnapshot(params: {
     : undefined;
   const sourceConfig = asResolvedSourceConfig(params.sourceConfig);
   const runtimeConfig = asRuntimeConfig(params.runtimeConfig);
+  const providerUseBindings = getConfigProviderUseBindings(runtimeConfig);
   if (params.resolutionFacts !== undefined) {
     setConfigResolutionFacts(sourceConfigBeforeMigrations, params.resolutionFacts);
     setConfigResolutionFacts(sourceConfig, params.resolutionFacts);
     setConfigResolutionFacts(runtimeConfig, params.resolutionFacts);
   }
+  setConfigProviderUseBindings(sourceConfig, providerUseBindings);
+  setConfigProviderUseBindings(runtimeConfig, providerUseBindings);
   return {
     path: params.path,
     includedPaths: [...(params.includedPaths ?? [])],

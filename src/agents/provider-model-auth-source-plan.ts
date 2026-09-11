@@ -1,5 +1,7 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { resolveConfigProviderUseBindings } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { ProviderBindingEnvVarCandidates } from "../secrets/provider-env-vars.js";
 import { isSetupCredentialAccessible } from "./auth-profiles/setup-access.js";
 import type { AuthProfileCredential } from "./auth-profiles/types.js";
 
@@ -24,17 +26,79 @@ export function isGenericProviderCredentialEnvVar(name: string): boolean {
   return GENERIC_CREDENTIAL_ENV_VARS.has(name);
 }
 
+/** One declaring chat plugin may bind its own family, but never a competing plugin. */
+export function resolveProviderEnvironmentAdmission(params: {
+  env?: NodeJS.ProcessEnv;
+  providerEnvVars?: ProviderBindingEnvVarCandidates;
+}): {
+  bindings: ReadonlyMap<string, { kind: "environment"; envVar: string }>;
+  conflicts: readonly {
+    envVar: string;
+    pluginIds: readonly string[];
+    providers: readonly string[];
+  }[];
+} {
+  const env = params.env ?? process.env;
+  const owners = new Map<string, Map<string, Set<string>>>();
+  for (const [provider, declarations] of Object.entries(params.providerEnvVars ?? {})) {
+    for (const declaration of declarations) {
+      for (const envVar of declaration.envVars) {
+        if (isGenericProviderCredentialEnvVar(envVar) || !env[envVar]?.trim()) {
+          continue;
+        }
+        const plugins = owners.get(envVar) ?? new Map<string, Set<string>>();
+        const pluginId = declaration.pluginId.trim().toLowerCase();
+        const providers = plugins.get(pluginId) ?? new Set<string>();
+        providers.add(normalizeProviderId(provider));
+        plugins.set(pluginId, providers);
+        owners.set(envVar, plugins);
+      }
+    }
+  }
+  const bindings = new Map<string, { kind: "environment"; envVar: string }>();
+  const conflicts: Array<{ envVar: string; pluginIds: string[]; providers: string[] }> = [];
+  for (const [envVar, plugins] of owners) {
+    const providerIds = new Set<string>();
+    for (const ids of plugins.values()) {
+      for (const id of ids) {
+        providerIds.add(id);
+      }
+    }
+    if (plugins.size !== 1) {
+      conflicts.push({ envVar, pluginIds: [...plugins.keys()], providers: [...providerIds] });
+    }
+  }
+  // Each provider's manifest order chooses its credential, not a sibling's declaration order.
+  for (const [provider, declarations] of Object.entries(params.providerEnvVars ?? {})) {
+    const id = normalizeProviderId(provider);
+    for (const declaration of declarations) {
+      for (const envVar of declaration.envVars) {
+        if (owners.get(envVar)?.size === 1 && !bindings.has(id)) {
+          bindings.set(id, { kind: "environment", envVar });
+        }
+      }
+    }
+  }
+  return { bindings, conflicts };
+}
+
 /** Provider intent is independent of credential readiness and catalog visibility. */
 export function resolveProviderUseAdmission(params: {
   config?: OpenClawConfig;
+  /** Persistence planning must distinguish runtime upgrade facts from authored entries. */
+  includeRuntimeBindings?: boolean;
   env?: NodeJS.ProcessEnv;
-  providerEnvVars?: Readonly<Record<string, readonly string[]>>;
+  providerEnvVars?: ProviderBindingEnvVarCandidates;
   profiles?: Readonly<Record<string, Pick<AuthProfileCredential, "provider" | "setup">>>;
   nativeProviders?: Iterable<string>;
   /** Selected routes may retain accounts through unconditional credential-family aliases. */
   requestedProviders?: Iterable<string>;
   storedCredentialAuthAliases?: Readonly<Record<string, string>>;
 }): ReadonlyMap<string, ProviderUseBinding> {
+  const config =
+    params.config && params.includeRuntimeBindings !== false
+      ? resolveConfigProviderUseBindings(params.config)
+      : params.config;
   const admitted = new Map<string, ProviderUseBinding>();
   const add = (provider: string, binding: ProviderUseBinding) => {
     const id = normalizeProviderId(provider);
@@ -42,7 +106,7 @@ export function resolveProviderUseAdmission(params: {
       admitted.set(id, binding);
     }
   };
-  for (const provider of Object.keys(params.config?.models?.providers ?? {})) {
+  for (const provider of Object.keys(config?.models?.providers ?? {})) {
     add(provider, { kind: "provider-config" });
   }
   for (const [profileId, profile] of Object.entries(params.profiles ?? {})) {
@@ -71,22 +135,8 @@ export function resolveProviderUseAdmission(params: {
   for (const provider of params.nativeProviders ?? []) {
     add(provider, { kind: "native-account" });
   }
-  const envOwners = new Map<string, Set<string>>();
-  for (const [provider, envVars] of Object.entries(params.providerEnvVars ?? {})) {
-    for (const envVar of envVars) {
-      const owners = envOwners.get(envVar) ?? new Set<string>();
-      owners.add(normalizeProviderId(provider));
-      envOwners.set(envVar, owners);
-    }
-  }
-  const env = params.env ?? process.env;
-  for (const [envVar, owners] of envOwners) {
-    if (owners.size !== 1 || isGenericProviderCredentialEnvVar(envVar) || !env[envVar]?.trim()) {
-      continue;
-    }
-    for (const provider of owners) {
-      add(provider, { kind: "environment", envVar });
-    }
+  for (const [provider, binding] of resolveProviderEnvironmentAdmission(params).bindings) {
+    add(provider, binding);
   }
   return admitted;
 }
@@ -129,6 +179,8 @@ export type ProviderModelAuthDirectSource = {
   readiness: ProviderModelAuthReadiness;
   evidence: ProviderModelAuthEvidence;
   authorization: ProviderModelAuthAuthorization;
+  /** Independently admitted environment source; does not inherit a profile's authority. */
+  boundEnvVar?: string;
 };
 
 export type ProviderModelAuthSource =
@@ -222,6 +274,7 @@ export function buildProviderModelAuthDirectSource(params: {
    * escapes the ambient-credential rule. Make each caller state it.
    */
   authorization: ProviderModelAuthAuthorization;
+  boundEnvVar?: string;
 }): ProviderModelAuthDirectSource {
   return {
     kind: "direct",
@@ -229,6 +282,7 @@ export function buildProviderModelAuthDirectSource(params: {
     readiness: toProviderModelAuthReadiness(params.availability),
     evidence: params.evidence,
     authorization: params.authorization,
+    ...(params.boundEnvVar ? { boundEnvVar: params.boundEnvVar } : {}),
   };
 }
 

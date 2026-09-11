@@ -16,10 +16,10 @@ sidebarTitle: "Configuration"
     ```
 
     <Tip>
-    Local connections do not need a key. `OLLAMA_API_KEY` is shared with Ollama Cloud,
-    so the environment variable alone does not select a provider. For an existing
-    selected model, Gateway startup and `openclaw doctor --fix` share the
-    [one-time repair](/concepts/model-providers) without replacing saved accounts.
+    Local connections do not need a key. The Ollama plugin declares
+    `OLLAMA_API_KEY` for both local and cloud model identities, so that variable
+    can bind both without extra provider entries. The entry above explicitly
+    selects a local host when no key is needed.
     </Tip>
 
   </Tab>

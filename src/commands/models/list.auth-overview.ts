@@ -88,6 +88,8 @@ export function resolveProviderAuthOverview(params: {
   aliasMap?: Readonly<Record<string, string>>;
   envCandidateMap?: Readonly<Record<string, readonly string[]>>;
   authEvidenceMap?: Readonly<Record<string, readonly ProviderAuthEvidence[]>>;
+  /** The readiness owner selected this admitted environment variable for a working route. */
+  selectedEnvironmentVariable?: string;
 }): ProviderAuthOverview {
   const { provider, cfg, store } = params;
   const now = Date.now();
@@ -159,12 +161,23 @@ export function resolveProviderAuthOverview(params: {
     candidateMap: params.envCandidateMap,
     authEvidenceMap: params.authEvidenceMap,
     skipSetupProviderFallback: hasPrecomputedCandidates || hasPrecomputedEvidence,
+    ...(params.selectedEnvironmentVariable
+      ? {
+          aliasMap: {},
+          candidateMap: { [normalizedProvider]: [params.selectedEnvironmentVariable] },
+          authEvidenceMap: {},
+          skipSetupProviderFallback: true,
+        }
+      : {}),
   });
   const customKey = getCustomProviderApiKey(cfg, provider);
   const usableCustomKey = resolveUsableCustomProviderApiKey({ cfg, provider });
   const providerApiKeyRef = resolveProviderConfigSecretInput(cfg, provider).ref;
 
   const effective: ProviderAuthOverview["effective"] = (() => {
+    if (params.selectedEnvironmentVariable && envKey) {
+      return { kind: "env", detail: maskApiKey(envKey.apiKey) };
+    }
     if (providerApiKeyRef) {
       if (
         providerApiKeyRef.source !== "env" &&

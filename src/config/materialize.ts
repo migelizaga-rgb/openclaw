@@ -11,6 +11,7 @@ import {
 import { inheritLegacyDefaultAgentId } from "./legacy.default-agent-owner.js";
 import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
 import { normalizeConfigPaths } from "./normalize-paths.js";
+import { copyConfigResolutionFacts } from "./resolution-facts.js";
 import { normalizeTalkConfig } from "./talk.js";
 import type { OpenClawConfig, ResolvedSourceConfig, RuntimeConfig } from "./types.js";
 
@@ -47,5 +48,6 @@ export function materializeRuntimeConfig(
   next = normalizeTalkConfig(next);
   normalizeConfigPaths(next, options);
   normalizeExecSafeBinProfilesInConfig(next);
+  copyConfigResolutionFacts(config, next);
   return asRuntimeConfig(inheritLegacyDefaultAgentId(config, next));
 }

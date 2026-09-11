@@ -53,14 +53,11 @@ export async function commitStartupConfigRepairs(params: {
   automaticConfigRepair: ReturnType<typeof planAutomaticConfigRepair>;
   activeConfigRepair: boolean;
   gatewayStartupCheckpointRequired: boolean;
-  migrateProviderBindings: boolean;
-  env: NodeJS.ProcessEnv;
   lease: StartupMigrationLease | undefined;
   measure?: ConfigSnapshotReadMeasure;
   beforeStateMigrations?: () => Promise<boolean>;
   readSnapshot: () => Promise<DoctorConfigPreflightPluginSnapshotRead>;
   runWithPluginMetadataSnapshot: PluginMetadataSnapshotScopeRunner;
-  report: (result: MigrationMessages) => void;
 }): Promise<DoctorConfigPreflightPluginSnapshotRead> {
   let snapshotRead = params.snapshotRead;
   let snapshot = snapshotRead.snapshot;
@@ -98,53 +95,6 @@ export async function commitStartupConfigRepairs(params: {
     );
     snapshotRead = await params.readSnapshot();
     snapshot = snapshotRead.snapshot;
-  }
-  if (params.migrateProviderBindings && snapshot.valid && snapshot.exists) {
-    const {
-      prepareProviderUseBindingMigration,
-      writeProviderUseBindingMigration,
-      completeProviderUseBindingMigration,
-    } = await import("./doctor/shared/provider-use-binding-migration.js");
-    const config = snapshot.sourceConfig ?? snapshot.config ?? {};
-    let bindingMigration = params.runWithPluginMetadataSnapshot({ config }, () =>
-      prepareProviderUseBindingMigration({ config, configPath: snapshot.path, env: params.env }),
-    );
-    params.report({ changes: [], warnings: bindingMigration.warnings ?? [] });
-    if (bindingMigration.changes.length > 0 || bindingMigration.pending) {
-      await guardWrite();
-      if (bindingMigration.bindings) {
-        const checked = await writeProviderUseBindingMigration(
-          {
-            config: bindingMigration.config,
-            sourceConfig: snapshot.sourceConfig,
-            configPath: snapshot.path,
-            env: params.env,
-            bindings: bindingMigration.bindings,
-          },
-          async (current, withCommit) => {
-            if (current.changes.length > 0) {
-              await commitAutomaticConfigRepair(
-                current,
-                snapshot,
-                bindingMigration.unsetPaths,
-                withCommit,
-              );
-            }
-          },
-        );
-        bindingMigration = { ...bindingMigration, ...checked };
-        params.report({ changes: checked.changes, warnings: checked.warnings });
-        snapshotRead = await params.readSnapshot();
-        snapshot = snapshotRead.snapshot;
-      }
-      params.lease?.heartbeat();
-      if (bindingMigration.pending) {
-        params.report({
-          changes: [],
-          warnings: completeProviderUseBindingMigration(snapshot.path, params.env),
-        });
-      }
-    }
   }
   return snapshotRead;
 }

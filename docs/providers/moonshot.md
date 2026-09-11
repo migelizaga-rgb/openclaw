@@ -15,10 +15,10 @@ separate Kimi Coding provider.
 Moonshot and Kimi Coding are **separate providers**, each shipped as a separate external plugin. Keys are not interchangeable, endpoints differ, and model refs differ (`moonshot/...` vs `kimi/...`).
 </Warning>
 
-`MOONSHOT_API_KEY` can enable Moonshot without a provider entry. `KIMI_API_KEY`
-is shared across the Moonshot and Kimi manifest declarations, and
-`KIMICODE_API_KEY` is shared across Kimi declarations. For these shared keys,
-run onboarding or explicitly configure the intended `models.providers` entry.
+`MOONSHOT_API_KEY` enables Moonshot without a provider entry. `KIMI_API_KEY`
+and `KIMICODE_API_KEY` belong to the Kimi Coding plugin's declaring providers,
+including `kimi` and `kimi-coding`. They do not enable or authenticate Moonshot
+API model requests.
 
 ## Built-in model catalog
 

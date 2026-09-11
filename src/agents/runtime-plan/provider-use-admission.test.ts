@@ -12,8 +12,8 @@ import { resolveProviderUseAdmission } from "../provider-model-auth-source-plan.
 import { prepareAgentRuntimeAuth } from "./prepare-auth.js";
 
 const sharedProviderEnvVars = {
-  opencode: ["OPENCODE_API_KEY"],
-  "opencode-go": ["OPENCODE_API_KEY"],
+  opencode: [{ pluginId: "opencode", envVars: ["OPENCODE_API_KEY"] }],
+  "opencode-go": [{ pluginId: "opencode-go", envVars: ["OPENCODE_API_KEY"] }],
 };
 const byteplusMetadataSnapshot = createPluginMetadataSnapshotFixture({
   plugins: [
@@ -31,7 +31,7 @@ describe("resolveProviderUseAdmission", () => {
     expect(
       resolveProviderUseAdmission({
         env: { BYTEPLUS_API_KEY: "environment-account" },
-        providerEnvVars: { byteplus: ["BYTEPLUS_API_KEY"] },
+        providerEnvVars: { byteplus: [{ pluginId: "byteplus", envVars: ["BYTEPLUS_API_KEY"] }] },
         profiles: { "byteplus:saved": { provider: "byteplus" } },
         requestedProviders: ["byteplus-plan"],
         storedCredentialAuthAliases: { "byteplus-plan": "byteplus", "byteplus-other": "byteplus" },
@@ -328,10 +328,10 @@ describe("resolveProviderUseAdmission", () => {
     const admission = resolveProviderUseAdmission({
       env: { OWNER_API_KEY: "synthetic-secret", EMPTY_API_KEY: "  " },
       providerEnvVars: {
-        " Owner ": ["OWNER_API_KEY"],
-        owner: ["OWNER_API_KEY"],
+        " Owner ": [{ pluginId: "owner", envVars: ["OWNER_API_KEY"] }],
+        owner: [{ pluginId: "owner", envVars: ["OWNER_API_KEY"] }],
         borrower: [],
-        empty: ["EMPTY_API_KEY"],
+        empty: [{ pluginId: "empty", envVars: ["EMPTY_API_KEY"] }],
       },
     });
 
@@ -393,7 +393,7 @@ describe("resolveProviderUseAdmission", () => {
     expect(
       resolveProviderUseAdmission({
         env: { [envVar]: "synthetic-value" },
-        providerEnvVars: { cloud: [envVar] },
+        providerEnvVars: { cloud: [{ pluginId: "cloud", envVars: [envVar] }] },
       }),
     ).toEqual(new Map());
   });

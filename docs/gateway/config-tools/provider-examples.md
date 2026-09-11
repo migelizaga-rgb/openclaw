@@ -51,6 +51,10 @@ Worked `models.providers` configurations. For what each field means, see [Custom
 
   </Accordion>
   <Accordion title="Kimi Coding">
+    `KIMI_API_KEY` and `KIMICODE_API_KEY` are declared by the Kimi Coding plugin
+    for its own `kimi` and `kimi-coding` providers. They need no provider entry
+    for those model requests and do not authenticate Moonshot API models.
+
     ```json5
     {
       env: { vars: { KIMI_API_KEY: "sk-..." } },
@@ -108,6 +112,10 @@ Worked `models.providers` configurations. For what each field means, see [Custom
     See [Local Models](/gateway/local-models). TL;DR: run a large local model via LM Studio Responses API on serious hardware; keep hosted models merged for fallback.
   </Accordion>
   <Accordion title="MiniMax M3 (direct)">
+    `MINIMAX_API_KEY` already binds the MiniMax plugin's declaring providers.
+    The explicit entry below also shows how to override its transport and model
+    metadata; it is not required for default environment-key authentication.
+
     ```json5
     {
       agents: {
@@ -185,6 +193,9 @@ Worked `models.providers` configurations. For what each field means, see [Custom
 
   </Accordion>
   <Accordion title="OpenCode">
+    Zen and Go are separate plugin owners. Bind the catalog you intend to use;
+    the shared environment variable alone does not choose between them.
+
     ```json5
     {
       agents: {
@@ -193,10 +204,21 @@ Worked `models.providers` configurations. For what each field means, see [Custom
           models: { "opencode/claude-opus-4-6": { alias: "Opus" } },
         },
       },
+      models: {
+        providers: {
+          opencode: {
+            apiKey: { source: "env", provider: "default", id: "OPENCODE_API_KEY" },
+          },
+        },
+      },
     }
     ```
 
-    Set `OPENCODE_API_KEY` (or `OPENCODE_ZEN_API_KEY`). Use `opencode/...` refs for the Zen catalog or `opencode-go/...` refs for the Go catalog. Shortcut: `openclaw onboard --auth-choice opencode-zen` or `openclaw onboard --auth-choice opencode-go`.
+    Set `OPENCODE_API_KEY`, or change the SecretRef `id` to `OPENCODE_ZEN_API_KEY`
+    and set that variable. For Go, use `opencode-go` in both the provider entry
+    and model refs. Onboarding writes the selected binding:
+    `openclaw onboard --auth-choice opencode-zen` or
+    `openclaw onboard --auth-choice opencode-go`.
 
   </Accordion>
   <Accordion title="Synthetic (Anthropic-compatible)">

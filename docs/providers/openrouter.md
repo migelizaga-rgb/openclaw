@@ -84,10 +84,10 @@ completion so browsers outside the tailnet can still finish setup.
 
 ## Config example
 
-`OPENROUTER_API_KEY` is also declared by the Perplexity plugin. For model
-requests, save an OpenRouter auth profile or explicitly configure
-`models.providers.openrouter` as below. Selecting a model alone does not enable
-credential use.
+`OPENROUTER_API_KEY` enables OpenRouter model requests without a provider entry.
+Perplexity's use of that key for web search does not claim chat-provider
+ownership. The explicit entry below remains useful when you want to set
+provider options yourself.
 
 ```json5
 {

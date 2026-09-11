@@ -296,7 +296,10 @@ on a different release.
     when you want an xAI Console API key instead of subscription OAuth.
   </Accordion>
   <Accordion title="OpenCode">
-    Prompts for `OPENCODE_API_KEY` (or `OPENCODE_ZEN_API_KEY`) and lets you choose the Zen or Go catalog (one API key covers both).
+    Prompts for `OPENCODE_API_KEY` (or `OPENCODE_ZEN_API_KEY`) and lets you choose
+    the Zen or Go catalog. Setup binds the selected provider explicitly. The
+    plugins share variable names; this does not grant access to both catalogs
+    or their separate entitlements.
     Setup URL: [opencode.ai/auth](https://opencode.ai/auth).
   </Accordion>
   <Accordion title="API key (generic)">

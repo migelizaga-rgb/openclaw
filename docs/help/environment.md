@@ -142,6 +142,14 @@ The config `env.vars` block accepts literal string values only. It does not expa
 `file:...` values. For example, `XAI_API_KEY: "file:secrets/xai-api-key.txt"`
 is passed to providers as that exact string.
 
+For model requests, a variable directly declared by one model plugin binds that
+plugin's declaring provider IDs. This includes the OpenRouter key above and
+same-plugin family keys such as `MINIMAX_API_KEY`. Non-model plugins do not
+claim chat-key ownership. Variables shared across different model plugins and
+generic credentials such as `GITHUB_TOKEN` still require an explicit provider
+binding. The environment source does not change this rule. See
+[Model provider bindings](/concepts/model-providers#when-credentials-enable-a-provider).
+
 For file-backed provider keys, use a SecretRef on the credential field that
 supports it:
 

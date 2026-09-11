@@ -20,8 +20,18 @@ not an API key.
 ## Getting started
 
 Choose your preferred auth method and follow the setup steps.
-Both methods require an explicit `models.providers["amazon-bedrock"]` entry.
+For a new setup, declare the Bedrock provider:
+
+```bash
+openclaw config set models.providers.amazon-bedrock '{}'
+```
+
 AWS credentials and discovery settings alone do not enable Bedrock use.
+For an existing selected Bedrock route, the provider-binding upgrade can supply
+this minimal declaration in memory at startup. Startup does not write config or
+complete the upgrade. `openclaw doctor --fix` persists it when the selection is
+unambiguous and no saved-account conflict exists. Managed config receives the
+exact declaration to add. See [Provider upgrade migrations](/gateway/doctor/config-migrations).
 
 <Tabs>
   <Tab title="Access keys / env vars">
@@ -157,6 +167,13 @@ Discovery requires the configured Bedrock provider:
   configured models usable.
 - The AWS credential chain supplies credentials after provider setup. Neither
   AWS environment variables nor `discovery.enabled: true` replace that setup.
+
+This changes discovery for configured instance-role installs that have no AWS
+environment markers: they now call `ListFoundationModels` and
+`ListInferenceProfiles` by default. A narrow IAM policy must permit those calls,
+or set `plugins.entries.amazon-bedrock.config.discovery.enabled` to `false` and
+keep an explicit model list. The same applies to a selected route admitted by
+the in-memory upgrade.
 
 <Note>
 For explicit `models.providers["amazon-bedrock"]` entries, OpenClaw can still resolve Bedrock env-marker auth early from AWS env markers such as `AWS_BEARER_TOKEN_BEDROCK` without forcing full runtime auth loading. The actual model-call auth path still uses the AWS SDK default chain.

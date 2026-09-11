@@ -51,6 +51,9 @@ beyond the grace period.
   <Accordion title="2. Legacy config key migrations">
     Gateway startup automatically applies deterministic, prompt-free legacy config migrations when an otherwise invalid single-file config can be fully migrated. It uses the same migration transforms as `openclaw doctor --fix`, validates the complete result including plugin config before writing, and reports the applied changes. The write runs under the startup migration lease and preserves the previous config in the five-slot `openclaw.json.bak` / `.bak.1` through `.bak.4` backup ring.
 
+    The provider-binding upgrade described below is separate: startup applies
+    those bindings only in memory. Doctor owns their persistent write and receipt.
+
     Startup does not migrate configs using `$include`, configs in Nix mode, or configs last written by a newer OpenClaw version. It also skips automatic config migration while an update is in progress and plugin validation is deferred; the post-update doctor run owns that repair. If any validation or legacy-key issue remains after migration, startup leaves the config unchanged, refuses to start, and prints the `openclaw doctor --fix` hint. An interactive terminal can still offer to run doctor and retry once for configs that need other repairs; headless services stop with the hint.
 
     Other commands that encounter legacy keys still ask you to run `openclaw doctor`. Doctor explains the issues, shows its migrations, and rewrites `~/.openclaw/openclaw.json` with the updated schema. Cron job store migrations are also handled by `openclaw doctor --fix`; automatic config-key migration does not import legacy session stores or repair services.
@@ -75,31 +78,46 @@ beyond the grace period.
 
     Active migrations:
 
-    - Shared model-provider credentials: Doctor and Gateway startup preserve only providers selected
-      by a primary model, configured fallback, or persisted user session pin. It
-      writes an env SecretRef under `models.providers.<id>` when a shared-family
-      key previously supplied that unbound identity. Any saved account for that
-      provider or its family, in shared or agent-local storage, blocks an env
-      binding. The notice names the provider and saved profiles so the operator
-      can bind the account explicitly. Selected routes keep their existing saved
-      account through the provider's authentication alias. Unselected siblings
-      and generic credentials are excluded. A
-      receipt closes this one-time upgrade after successful persistence; later
-      model selections need an explicit binding. Unreadable upgrade state leaves
-      config unchanged and asks for another Doctor run. If a global binding would
-      replace another agent's account, Doctor preserves that account, warns which
-      agent still needs authentication, and leaves the upgrade open. Independent
-      safe bindings still proceed. A missing shared-key variable also leaves
-      the upgrade open. The warning names the variable and asks you to rerun
-      Doctor from the service environment or with that variable set. Gateway
-      startup can finish the same repair using its service environment.
-      If an account is saved while Doctor prepares the config write, Doctor
-      defers the new shared-key bindings, keeps the upgrade open, and saves
-      independent config repairs. It never writes a generated binding over the
-      saved account. If a binding requires a guarded write to an included config
-      file, Doctor leaves it pending and asks you to edit that file explicitly.
-      The provider overlay contains
-      only the credential reference; bundled catalog defaults stay with the provider:
+    - Model-provider bindings: Gateway startup applies the approved upgrade
+      transform **in memory only**. It does not write provider bindings to
+      `openclaw.json` or complete their upgrade receipt. `openclaw doctor --fix`
+      owns persistent changes and keeps the normal config backup.
+      A managed or read-only config remains unchanged; startup can serve an
+      eligible selected route and reports the exact entry to add to that config.
+
+      The upgrade inspects configured model selections, including primary and
+      fallback models, subagent and utility models, image/PDF/voice/media model
+      references, heartbeat, compaction and memory-flush models, exec reviewers,
+      channel overrides, cron model overrides, and persisted user session pins.
+      Doctor revisits completion records from the earlier primary/fallback-only
+      selection pass. Auxiliary capability selection and authentication are
+      otherwise unchanged.
+
+      A key owned by one chat plugin already binds that plugin's directly
+      declaring family providers and needs no migration. For other eligible
+      existing shared-key selections, the transform proposes an env SecretRef.
+      For an unambiguous selected cloud credential-chain provider, it proposes
+      a minimal `models.providers.<id>: {}` declaration. Generic credentials
+      alone never select a provider.
+
+      Any saved account for the provider or its family, in any auth scope,
+      blocks a generated env binding. The notice names the provider and saved
+      profiles so the operator can bind that account explicitly. A missing
+      variable, account conflict, unreadable upgrade state, or unwritable config
+      leaves completion open. Independent safe repairs can still proceed.
+      Doctor reports conflicting model-plugin claims to a variable rather than
+      advising the operator to set a key that is already present.
+
+      If an account appears while Doctor prepares a write, the final publication
+      check defers generated bindings and preserves independent repairs. If a
+      binding belongs in an included file, Doctor leaves it pending and names
+      that file. Only successful Doctor persistence closes the upgrade.
+      Later model selections need their own binding when their key is ambiguous
+      or borrowed.
+
+      An auth-only overlay is not a catalog override. Doctor does not recommend
+      removing it to restore catalog defaults. The env overlay contains only
+      its credential reference; bundled defaults stay with the provider:
 
       ```json5
       {

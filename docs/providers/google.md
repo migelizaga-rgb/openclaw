@@ -23,6 +23,17 @@ For Vertex with Application Default Credentials, explicitly configure
 `models.providers["google-vertex"]`. Cloud credentials alone do not enable model
 requests. The provider-specific `GOOGLE_CLOUD_API_KEY` can enable Vertex directly.
 
+```bash
+openclaw config set models.providers.google-vertex '{}'
+```
+
+For an existing selected Vertex route, the provider-binding upgrade can supply
+that minimal declaration in memory at startup, without changing config or
+completing the upgrade receipt. `openclaw doctor --fix` persists an unambiguous
+selected declaration when no saved-account conflict exists. For read-only
+config, add the reported entry to your deployment source. See
+[Provider upgrade migrations](/gateway/doctor/config-migrations).
+
 <Tabs>
   <Tab title="AI Studio API key">
     **Recommended for:** standard Gemini API access.

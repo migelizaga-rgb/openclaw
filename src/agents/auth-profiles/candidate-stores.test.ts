@@ -8,10 +8,10 @@ import {
 } from "../../state/openclaw-agent-db-registry.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { updateCandidateAuthProfileStore } from "./candidate-store-update.js";
 import {
   listCandidateAuthProfileStores,
   loadCandidateAuthProfileStore,
-  updateCandidateAuthProfileStore,
 } from "./candidate-stores.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);

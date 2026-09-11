@@ -9,6 +9,11 @@ type SetupCredentialAccess = {
 
 const setupCredentialAccess = new AsyncLocalStorage<SetupCredentialAccess>();
 
+/** An explicit setup probe must not verify its candidate through an ambient account. */
+export function isSetupCredentialAccessActive(): boolean {
+  return setupCredentialAccess.getStore()?.isActive() === true;
+}
+
 export function isSetupCredentialAccessible(params: {
   profileId: string;
   credential: Pick<AuthProfileCredential, "setup">;

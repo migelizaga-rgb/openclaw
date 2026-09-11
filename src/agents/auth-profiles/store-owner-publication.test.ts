@@ -62,8 +62,8 @@ describe("auth publication owner receipts", () => {
       },
       { env: root.env },
     );
-    const lockPath = path.join(root.stateDir, "locks", "auth-profile-publication.lock");
-    const outerLockPath = path.join(outer.stateDir, "locks", "auth-profile-publication.lock");
+    const lockPath = path.join(root.stateDir, "auth-profile-publication.lock");
+    const outerLockPath = path.join(outer.stateDir, "auth-profile-publication.lock");
     expect(() =>
       withEnv(outer.env, () =>
         runOpenClawAgentWriteTransaction(
@@ -89,13 +89,10 @@ describe("auth publication owner receipts", () => {
     );
   });
 
-  it("preserves successful publication when lock cleanup fails and blocks the next write until cleanup succeeds", async () => {
-    const root = await seedRoot("original");
-    const lockPath = path.join(
-      fs.realpathSync(root.stateDir),
-      "locks",
-      "auth-profile-publication.lock",
-    );
+  it("preserves successful publication when lock cleanup fails and blocks the next write until cleanup succeeds", () => {
+    const stateDir = tempDirs.make("openclaw-auth-publication-cleanup-");
+    const env = { ...process.env, OPENCLAW_STATE_DIR: stateDir };
+    const lockPath = path.join(fs.realpathSync(stateDir), "auth-profile-publication.lock");
     const remove = fs.rmSync;
     const failure = Object.assign(new Error("publication lock cleanup denied"), { code: "EACCES" });
     const mock = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
@@ -107,25 +104,26 @@ describe("auth publication owner receipts", () => {
     let publications = 0;
     try {
       expect(() =>
-        withAuthProfilePublicationLock(root.env, () => {
+        withAuthProfilePublicationLock(env, () => {
           publications += 1;
         }),
       ).not.toThrow();
       expect(publications).toBe(1);
       expect(() =>
-        withAuthProfilePublicationLock(root.env, () => {
+        withAuthProfilePublicationLock(env, () => {
           publications += 1;
         }),
       ).toThrow(failure);
       expect(publications).toBe(1);
     } finally {
       mock.mockRestore();
-      withAuthProfilePublicationLock(root.env, () => {
+      withAuthProfilePublicationLock(env, () => {
         publications += 1;
       });
     }
     expect(publications).toBe(2);
     expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.readdirSync(stateDir)).toEqual([]);
   });
 
   it.each(["prepare", "activate"] as const)(

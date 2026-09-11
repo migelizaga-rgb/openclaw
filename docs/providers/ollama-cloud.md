@@ -24,7 +24,7 @@ Follow [Ollama's API key instructions](https://docs.ollama.com/api/authenticatio
 openclaw onboard --auth-choice ollama-cloud
 ```
 
-Or set the key and explicitly declare the cloud provider:
+For an explicit configuration, set the key and declare the cloud provider:
 
 ```bash
 export OLLAMA_API_KEY="<your-ollama-cloud-api-key>" # pragma: allowlist secret
@@ -39,9 +39,9 @@ openclaw onboard --auth-choice ollama-cloud --ollama-cloud-api-key "<key>"
 
 Onboarding sets the default model to `ollama-cloud/minimax-m2.7`.
 
-`OLLAMA_API_KEY` is shared with the local `ollama` provider. The environment key
-alone does not enable cloud model requests; use onboarding or the provider
-entry above.
+The Ollama plugin declares `OLLAMA_API_KEY` for both `ollama` and `ollama-cloud`.
+The environment key therefore enables those model identities without the
+explicit entry above. Keep an entry when you need to override provider settings.
 
 ## Defaults
 

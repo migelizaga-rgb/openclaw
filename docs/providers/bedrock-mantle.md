@@ -33,6 +33,13 @@ openclaw config set models.providers.amazon-bedrock-mantle '{}'
 AWS credentials, including `AWS_BEARER_TOKEN_BEDROCK`, do not enable Mantle by
 themselves. A standard Bedrock provider entry does not enable Mantle either.
 
+An existing selected Mantle route can receive this minimal declaration through
+the provider-binding upgrade. Startup applies it only in memory and leaves
+config and the upgrade receipt unchanged. `openclaw doctor --fix` persists an
+unambiguous selected declaration when no saved-account conflict exists. For
+managed config, add the command's entry to its source instead. See
+[Provider upgrade migrations](/gateway/doctor/config-migrations).
+
 <Tabs>
   <Tab title="Explicit bearer token">
     **Best for:** environments where you already have a Mantle bearer token.

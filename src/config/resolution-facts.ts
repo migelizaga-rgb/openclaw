@@ -1,10 +1,13 @@
 import type { EnvSubstitutionWarning } from "./env-substitution.js";
+import type { OpenClawConfig } from "./types.openclaw.js";
 import { coerceSecretRef, DEFAULT_SECRET_PROVIDER_ALIAS, type SecretRef } from "./types.secrets.js";
 
 /** `null` means this value has not passed through authoritative config env substitution. */
 export type ConfigResolutionFacts = ReadonlySet<string> | null;
 
 const configResolutionFacts = new WeakMap<object, ReadonlySet<string>>();
+export type ConfigProviderUseBindings = Readonly<Record<string, { apiKey?: SecretRef }>>;
+const providerUseBindingsByConfig = new WeakMap<object, ConfigProviderUseBindings>();
 type ConfigEnvSecretRefFact = Readonly<{
   ref: SecretRef;
   state: "pending" | "resolved";
@@ -59,6 +62,42 @@ export function getConfigResolutionFacts(target: unknown): ConfigResolutionFacts
 
 export function copyConfigResolutionFacts(source: unknown, target: unknown): void {
   setConfigResolutionFacts(target, getConfigResolutionFacts(source));
+  setConfigProviderUseBindings(target, getConfigProviderUseBindings(source));
+}
+
+/** Approved startup bindings are runtime facts, never authored fields for config writers. */
+export function setConfigProviderUseBindings(
+  target: unknown,
+  bindings: ConfigProviderUseBindings,
+): void {
+  if (!target || typeof target !== "object") {
+    return;
+  }
+  if (Object.keys(bindings).length > 0) {
+    providerUseBindingsByConfig.set(target, bindings);
+  } else {
+    providerUseBindingsByConfig.delete(target);
+  }
+}
+
+export function getConfigProviderUseBindings(target: unknown): ConfigProviderUseBindings {
+  return target && typeof target === "object"
+    ? (providerUseBindingsByConfig.get(target) ?? {})
+    : {};
+}
+
+/** Only the shared migration can add runtime declarations to an authored auth view. */
+export function resolveConfigProviderUseBindings(config: OpenClawConfig): OpenClawConfig {
+  const bindings = getConfigProviderUseBindings(config);
+  if (Object.keys(bindings).length === 0) {
+    return config;
+  }
+  const resolved = {
+    ...config,
+    models: { ...config.models, providers: { ...bindings, ...config.models?.providers } },
+  };
+  copyConfigResolutionFacts(config, resolved);
+  return resolved;
 }
 
 export function cloneConfigWithResolutionFacts<T>(value: T): T {
@@ -72,6 +111,19 @@ export function copyConfigResolutionFactsExcept(
   target: unknown,
   paths: readonly string[],
 ): void {
+  const bindings = getConfigProviderUseBindings(source);
+  const removesBinding = (provider: string) =>
+    paths.some(
+      (path) =>
+        path === "models" ||
+        path === "models.providers" ||
+        path === `models.providers.${provider}` ||
+        path.startsWith(`models.providers.${provider}.`),
+    );
+  setConfigProviderUseBindings(
+    target,
+    Object.fromEntries(Object.entries(bindings).filter(([provider]) => !removesBinding(provider))),
+  );
   const facts = getConfigResolutionFacts(source);
   if (facts === null) {
     setConfigResolutionFacts(target, null);
@@ -100,18 +152,23 @@ export function copyConfigResolutionFactsExcept(
 type SerializedConfigResolutionFacts = Readonly<{
   unresolvedPaths: readonly string[];
   envSecretRefs: readonly (readonly [string, ConfigEnvSecretRefFact])[];
+  providerUseBindings?: ConfigProviderUseBindings;
+  envSubstitutionKnown?: boolean;
 }> | null;
 
 /** Captures loader provenance as deterministic data for a prepared worker generation. */
 export function serializeConfigResolutionFacts(target: unknown): SerializedConfigResolutionFacts {
   const facts = getConfigResolutionFacts(target);
-  return facts === null
+  const bindings = getConfigProviderUseBindings(target);
+  return facts === null && Object.keys(bindings).length === 0
     ? null
     : {
-        unresolvedPaths: [...facts].toSorted(),
-        envSecretRefs: [...(envSecretRefsByFacts.get(facts) ?? [])].toSorted(([left], [right]) =>
-          left.localeCompare(right),
+        unresolvedPaths: [...(facts ?? [])].toSorted(),
+        envSecretRefs: [...(facts ? (envSecretRefsByFacts.get(facts) ?? []) : [])].toSorted(
+          ([left], [right]) => left.localeCompare(right),
         ),
+        ...(Object.keys(bindings).length > 0 ? { providerUseBindings: bindings } : {}),
+        ...(facts === null ? { envSubstitutionKnown: false } : {}),
       };
 }
 
@@ -122,13 +179,15 @@ export function restoreConfigResolutionFacts(
 ): void {
   if (data === null) {
     setConfigResolutionFacts(target, null);
+    setConfigProviderUseBindings(target, {});
     return;
   }
   const facts = new Set(data.unresolvedPaths);
   if (data.envSecretRefs.length > 0) {
     envSecretRefsByFacts.set(facts, new Map(data.envSecretRefs));
   }
-  setConfigResolutionFacts(target, facts);
+  setConfigProviderUseBindings(target, data.providerUseBindings ?? {});
+  setConfigResolutionFacts(target, data.envSubstitutionKnown === false ? null : facts);
 }
 
 export function hasUnresolvedConfigPath(target: unknown, path: string): boolean {

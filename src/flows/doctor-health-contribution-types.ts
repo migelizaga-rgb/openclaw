@@ -2,8 +2,8 @@ import type { RetiredAuthProfileCleanupPlan } from "../commands/doctor-auth-lega
 import type { probeGatewayMemoryStatus } from "../commands/doctor-gateway-health.js";
 import type { DoctorOptions, DoctorPrompter } from "../commands/doctor-prompter.js";
 import type { ShippedPluginInstallConfigImport } from "../commands/doctor/shared/plugin-registry-migration.js";
+import type { ProviderUseBindingMigrationBindings } from "../commands/doctor/shared/provider-use-binding-migration.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { SecretRef } from "../config/types.secrets.js";
 import type { buildGatewayConnectionDetails } from "../gateway/call.js";
 import type {
   LegacyStateMigrationStepReceipt,
@@ -36,7 +36,7 @@ type DoctorConfigResult = {
   shouldRepairCronCodexModelRefsAfterConfigWrite?: boolean;
   retiredPhoneControlStateCleanupPending?: boolean;
   providerUseBindingMigrationPending?: boolean;
-  providerUseBindings?: Record<string, SecretRef>;
+  providerUseBindings?: ProviderUseBindingMigrationBindings;
   /** Store cleanup deferred until the repaired config reaches disk. */
   retiredAuthProfileCleanupPlans?: readonly RetiredAuthProfileCleanupPlan[];
   blockedCodexModelIdentities?: readonly string[];
@@ -61,7 +61,7 @@ export type DoctorHealthFlowContext = {
   /** The finalized config-flow candidate crossed the atomic writer boundary. */
   configResultWriteCommitted?: boolean;
   /** The requested config write was refused; later repairs must not consume its candidate. */
-  configWriteRefusal?: "validation" | "cron-owner-safety" | "include-ownership" | "config-conflict";
+  configWriteRefusal?: "validation" | "cron-owner-safety" | "include-ownership" | "config-conflict" | "read-only";
   /** One-shot repairs that require a durable config write have completed. */
   postConfigWriteRepairsCommitted?: boolean;
   sourceConfigValid: boolean;

@@ -3,7 +3,6 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { listAgentIds } from "../../../agents/agent-scope-config.js";
 import { resolveAgentDir } from "../../../agents/agent-scope.js";
-import { loadAuthProfileStoreForRuntime } from "../../../agents/auth-profiles.js";
 import {
   listCandidateAuthProfileStores,
   loadCandidateAuthProfileStore,
@@ -12,7 +11,7 @@ import { captureAuthProfileOwnerScope } from "../../../agents/auth-profiles/path
 import { loadPersistedAuthProfileStoreAtDatabasePath } from "../../../agents/auth-profiles/persisted.js";
 import { withAuthProfilePublicationLock } from "../../../agents/auth-profiles/publication.js";
 import type { AuthProfileStore } from "../../../agents/auth-profiles/types.js";
-import { resolveSelectedModelProviderIds } from "../../../agents/model-selection-config.js";
+import { resolveProviderAuthAliasMap } from "../../../agents/provider-auth-aliases.js";
 import {
   isGenericProviderCredentialEnvVar,
   resolveProviderUseAdmission,
@@ -20,6 +19,10 @@ import {
 import type { ConfigWriteOptions } from "../../../config/io.types.js";
 import { isConfigIncludeOwnershipError } from "../../../config/io.write-errors.js";
 import { GuardedConfigIncludeWriteError } from "../../../config/mutation-conflict.js";
+import {
+  resolveConfigProviderUseBindings,
+  setConfigProviderUseBindings,
+} from "../../../config/resolution-facts.js";
 import { resolveResetPreservedSelection } from "../../../config/sessions/reset-preserved-selection.js";
 import { scanDoctorSessionEntriesTolerant } from "../../../config/sessions/session-accessor.js";
 import type { ModelProviderConfigInput } from "../../../config/types.models.js";
@@ -31,32 +34,63 @@ import {
   recordLegacyMigrationReceipt,
   resolveLegacyMigrationSourceKey,
 } from "../../../infra/state-migrations.receipts.js";
+import type { PluginManifestRegistry } from "../../../plugins/manifest-registry.js";
 import {
-  resolveProviderAuthLookupMaps,
   resolveProviderBindingEnvVarCandidates,
+  type ProviderBindingEnvVarCandidates,
 } from "../../../secrets/provider-env-vars.js";
 import { withExistingOpenClawStateDatabaseReadOnly } from "../../../state/openclaw-state-db-readonly.js";
 import { runOpenClawStateWriteTransaction } from "../../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../../state/openclaw-state-db.paths.js";
 import { listExistingAgentDatabaseTargets } from "../../doctor-session-sqlite-readers.js";
+import {
+  collectConfiguredProviderUseSelections,
+  type ConfiguredProviderUseSelection,
+} from "./configured-provider-selection-ids.js";
 import { selectedCanonicalModelRefsForRuntimePolicy } from "./legacy-runtime-model-policy.js";
 
 const MIGRATION = "selected-shared-provider-bindings:v1";
+const SELECTION_VERSION = 2;
+const CHAIN_PROVIDERS = new Set(["amazon-bedrock", "amazon-bedrock-mantle", "google-vertex"]);
+export type ProviderUseBindingMigrationBindings = Record<string, { apiKey?: SecretRef }>;
 const DEFERRED =
   'Could not read provider upgrade state; shared-key bindings were left unchanged. Rerun "openclaw doctor --fix".';
+
+/** Runtime projection shares Doctor's transform but neither writes config nor completes receipts. */
+export function applyProviderUseBindingsToRuntime(
+  params: Parameters<typeof prepareProviderUseBindingMigration>[0] & {
+    runtimeConfig: OpenClawConfig;
+  },
+): { config: OpenClawConfig; warnings: string[] } {
+  const migration = prepareProviderUseBindingMigration(params);
+  setConfigProviderUseBindings(params.runtimeConfig, migration.bindings ?? {});
+  const warnings = [...(migration.warnings ?? [])];
+  const entries = Object.entries(migration.bindings ?? {}).map(([id, binding]) =>
+    binding.apiKey
+      ? `models.providers.${id}.apiKey = ${JSON.stringify(binding.apiKey)}`
+      : `models.providers.${id} = {}`,
+  );
+  if (entries.length > 0) {
+    warnings.push(
+      `Selected provider bindings are active in memory only. Run "openclaw doctor --fix" or update the managed config ${params.configPath}: ${entries.join("; ")}.`,
+    );
+  }
+  return { config: resolveConfigProviderUseBindings(params.runtimeConfig), warnings };
+}
 
 /** Preserve selected shared-key routes once; ordinary runtime selection never creates bindings. */
 export function prepareProviderUseBindingMigration(params: {
   config: OpenClawConfig;
   configPath: string;
   env: NodeJS.ProcessEnv;
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
 }): {
   config: OpenClawConfig;
   changes: string[];
   pending: boolean;
   warnings?: string[];
   unsetPaths?: string[][];
-  bindings?: Record<string, SecretRef>;
+  bindings?: ProviderUseBindingMigrationBindings;
 } {
   const { config, configPath, env } = params;
   const unchanged = { config, changes: [], pending: false };
@@ -67,7 +101,9 @@ export function prepareProviderUseBindingMigration(params: {
   }
   const sourceKey = resolveLegacyMigrationSourceKey(MIGRATION, configPath);
   const sessionSelections: Array<{ agentId: string; model: string }> = [];
-  let direct: Record<string, readonly string[]>;
+  let configuredSelections: ConfiguredProviderUseSelection[];
+  let narrowReceipt = false;
+  let direct: ProviderBindingEnvVarCandidates;
   let envCandidateMap: Readonly<Record<string, readonly string[]>>;
   let aliasMap: Readonly<Record<string, string>>;
   const authScopes = new Map<string, { agentDir: string; store: AuthProfileStore }>();
@@ -80,8 +116,22 @@ export function prepareProviderUseBindingMigration(params: {
       { env },
     );
     if (completed) {
-      return unchanged;
+      let report: unknown;
+      try {
+        report = JSON.parse(completed.reportJson);
+      } catch {
+        report = undefined;
+      }
+      if (
+        isRecord(report) &&
+        typeof report.selectionVersion === "number" &&
+        report.selectionVersion >= SELECTION_VERSION
+      ) {
+        return unchanged;
+      }
+      narrowReceipt = true;
     }
+    configuredSelections = collectConfiguredProviderUseSelections({ config, env });
     const candidates = listCandidateAuthProfileStores({ cfg: config, env });
     const sharedStore = loadPersistedAuthProfileStoreAtDatabasePath(
       resolveOpenClawStateSqlitePath(env),
@@ -123,28 +173,46 @@ export function prepareProviderUseBindingMigration(params: {
     }
     for (const agentId of new Set([
       ...listAgentIds(config),
+      ...configuredSelections.map((selection) => selection.agentId),
       ...sessionSelections.map((selection) => selection.agentId),
     ])) {
       const agentDir = resolveAgentDir(config, agentId, env);
       authScopes.set(agentId, {
         agentDir,
-        store: loadAuthProfileStoreForRuntime(
-          agentDir,
-          {
-            config,
-            readOnly: true,
-            allowKeychainPrompt: false,
-          },
-          env,
-        ),
+        store: {
+          version: 1,
+          profiles: Object.assign(
+            {},
+            ...accountScopes
+              .filter((scope) => scope.owner === "shared" || scope.owner === agentId)
+              .map((scope) => scope.store.profiles),
+          ),
+        },
       });
     }
-    direct = resolveProviderBindingEnvVarCandidates({ config, env });
-    ({ envCandidateMap, aliasMap } = resolveProviderAuthLookupMaps({
+    direct = resolveProviderBindingEnvVarCandidates({
+      config,
+      env,
+      manifestPlugins: params.manifestRegistry?.plugins,
+    });
+    aliasMap = resolveProviderAuthAliasMap({
       config,
       env,
       includeUntrustedWorkspacePlugins: false,
-    }));
+      ...(params.manifestRegistry
+        ? { metadataSnapshot: { plugins: params.manifestRegistry.plugins } }
+        : {}),
+    });
+    const envCandidates: Record<string, readonly string[]> = Object.fromEntries(
+      Object.entries(direct).map(([provider, declarations]) => [
+        provider,
+        declarations.flatMap((declaration) => declaration.envVars),
+      ]),
+    );
+    for (const [alias, provider] of Object.entries(aliasMap)) {
+      envCandidates[alias] ??= envCandidates[provider] ?? [];
+    }
+    envCandidateMap = envCandidates;
   } catch {
     return { ...unchanged, warnings: [DEFERRED] };
   }
@@ -156,14 +224,32 @@ export function prepareProviderUseBindingMigration(params: {
   }
   const selectedProviders = new Map<string, Set<string>>();
   for (const agentId of authScopes.keys()) {
-    selectedProviders.set(agentId, resolveSelectedModelProviderIds({ cfg: config, agentId }));
+    selectedProviders.set(
+      agentId,
+      new Set(
+        configuredSelections
+          .filter(
+            (selection) =>
+              selection.agentId === agentId &&
+              (!narrowReceipt ||
+                !selection.previouslyCovered ||
+                CHAIN_PROVIDERS.has(selection.provider)),
+          )
+          .map((selection) => selection.provider),
+      ),
+    );
   }
-  const manifestVariables = new Set(Object.values(direct).flat());
+  const manifestVariables = new Set(
+    Object.values(direct).flatMap((declarations) =>
+      declarations.flatMap((declaration) => declaration.envVars),
+    ),
+  );
   const admissions = new Map(
     [...authScopes].map(([agentId, { store }]) => [
       agentId,
       resolveProviderUseAdmission({
         config,
+        includeRuntimeBindings: false,
         env,
         providerEnvVars: direct,
         profiles: store.profiles,
@@ -171,24 +257,29 @@ export function prepareProviderUseBindingMigration(params: {
     ]),
   );
   const providers: Record<string, ModelProviderConfigInput> = {};
-  const bindings: Record<string, SecretRef> = {};
+  const bindings: ProviderUseBindingMigrationBindings = {};
   const changes: string[] = [];
   const warnings: string[] = [];
-  for (const [identity, candidates] of Object.entries(envCandidateMap)) {
+  for (const [identity, candidates] of Object.entries({
+    ...Object.fromEntries([...CHAIN_PROVIDERS].map((provider) => [provider, []])),
+    ...envCandidateMap,
+  })) {
     const provider = normalizeProviderId(identity);
+    const chain = CHAIN_PROVIDERS.has(provider);
     const selectedAgents = [...selectedProviders]
       .filter(
         ([agentId, selected]) =>
           selected.has(provider) ||
-          sessionSelections.some(
-            (selection) =>
-              selection.agentId === agentId &&
-              selectedCanonicalModelRefsForRuntimePolicy(selection.model, provider).length > 0,
-          ),
+          ((!narrowReceipt || chain) &&
+            sessionSelections.some(
+              (selection) =>
+                selection.agentId === agentId &&
+                selectedCanonicalModelRefsForRuntimePolicy(selection.model, provider).length > 0,
+            )),
       )
       .map(([agentId]) => agentId);
     if (
-      (!Object.hasOwn(direct, identity) && !Object.hasOwn(aliasMap, identity)) ||
+      (!chain && !Object.hasOwn(direct, identity) && !Object.hasOwn(aliasMap, identity)) ||
       selectedAgents.length === 0
     ) {
       continue;
@@ -201,14 +292,8 @@ export function prepareProviderUseBindingMigration(params: {
           ([sibling, names]) => normalizeProviderId(sibling) !== provider && names.includes(name),
         ),
     );
-    if (sharedVariables.length === 0) {
+    if (!chain && sharedVariables.length === 0) {
       continue;
-    }
-    const variable = sharedVariables.find((name) => env[name]?.trim());
-    if (!variable) {
-      warnings.push(
-        `Could not evaluate the shared-key upgrade for provider ${provider}: ${sharedVariables.join(", ")} is not set. Rerun "openclaw doctor --fix" from the service environment or with a candidate variable set.`,
-      );
     }
     const missingAgents = selectedAgents.filter(
       (agentId) => !admissions.get(agentId)?.has(provider),
@@ -224,6 +309,9 @@ export function prepareProviderUseBindingMigration(params: {
         const storedProvider = normalizeProviderId(profile.provider);
         if (
           storedProvider === provider ||
+          [provider, storedProvider].every(
+            (id) => id === "amazon-bedrock" || id === "amazon-bedrock-mantle",
+          ) ||
           (aliasMap[storedProvider] ?? storedProvider) === credentialProvider ||
           (envCandidateMap[storedProvider] ?? []).some(
             (name) => manifestVariables.has(name) && candidates.includes(name),
@@ -236,17 +324,30 @@ export function prepareProviderUseBindingMigration(params: {
     }
     if (conflictingProfiles.size > 0) {
       warnings.push(
-        `Provider ${provider} was not migrated for agents ${missingAgents.join(", ")}: a global env binding could replace an existing account for agents ${[...accountOwners].join(", ")} (profiles ${[...conflictingProfiles].join(", ")}). Bind the provider explicitly to the saved account, then rerun "openclaw doctor --fix".`,
+        `Provider ${provider} was not migrated for agents ${missingAgents.join(", ")}: a global binding could replace an existing account for agents ${[...accountOwners].join(", ")} (profiles ${[...conflictingProfiles].join(", ")}). Bind the provider explicitly to the saved account, then rerun "openclaw doctor --fix".`,
       );
       continue;
     }
-    const apiKey = variable ? parseEnvTemplateSecretRef(`\${${variable}}`, envProvider) : null;
-    if (!apiKey) {
+    const variable = sharedVariables.find((name) => env[name]?.trim());
+    if (!chain && !variable) {
+      warnings.push(
+        `Could not evaluate the shared-key upgrade for provider ${provider}: ${sharedVariables.join(", ")} is not set. Rerun "openclaw doctor --fix" from the service environment or with a candidate variable set.`,
+      );
       continue;
     }
-    providers[provider] = { apiKey };
-    bindings[provider] = apiKey;
-    changes.push(`Bound selected provider ${provider} to ${variable} with an env SecretRef.`);
+    const apiKey =
+      !chain && variable ? parseEnvTemplateSecretRef(`\${${variable}}`, envProvider) : null;
+    if (!chain && !apiKey) {
+      continue;
+    }
+    const binding = apiKey ? { apiKey } : {};
+    providers[provider] = binding;
+    bindings[provider] = binding;
+    changes.push(
+      chain
+        ? `Declared selected provider ${provider} for its configured credential chain.`
+        : `Bound selected provider ${provider} to ${variable} with an env SecretRef.`,
+    );
   }
   if (changes.length === 0) {
     return {
@@ -307,33 +408,34 @@ export function revalidateProviderUseBindingMigration(params: {
   sourceConfig?: OpenClawConfig;
   configPath: string;
   env: NodeJS.ProcessEnv;
-  bindings: Readonly<Record<string, SecretRef>>;
+  bindings: Readonly<ProviderUseBindingMigrationBindings>;
 }) {
   const config = structuredClone(params.config);
-  for (const [provider, apiKey] of Object.entries(params.bindings)) {
+  for (const [provider, binding] of Object.entries(params.bindings)) {
     const persisted = params.sourceConfig?.models?.providers?.[provider];
     if (
       persisted &&
       config.models?.providers &&
-      isDeepStrictEqual(config.models.providers[provider]?.apiKey, apiKey)
+      isDeepStrictEqual(config.models.providers[provider]?.apiKey, binding.apiKey)
     ) {
       config.models.providers[provider] = structuredClone(persisted);
     }
   }
   const analysis = structuredClone(config);
   const proposed = Object.entries(params.bindings).filter(
-    ([provider, apiKey]) =>
+    ([provider, binding]) =>
       !params.sourceConfig?.models?.providers?.[provider] &&
-      isDeepStrictEqual(config.models?.providers?.[provider]?.apiKey, apiKey),
+      Object.hasOwn(config.models?.providers ?? {}, provider) &&
+      isDeepStrictEqual(config.models?.providers?.[provider]?.apiKey, binding.apiKey),
   );
   for (const [provider] of proposed) {
     delete analysis.models?.providers?.[provider];
   }
   const checked = prepareProviderUseBindingMigration({ ...params, config: analysis });
-  const bindings: Record<string, SecretRef> = {};
-  for (const [provider, apiKey] of proposed) {
-    if (isDeepStrictEqual(checked.bindings?.[provider], apiKey)) {
-      bindings[provider] = apiKey;
+  const bindings: ProviderUseBindingMigrationBindings = {};
+  for (const [provider, binding] of proposed) {
+    if (isDeepStrictEqual(checked.bindings?.[provider], binding)) {
+      bindings[provider] = binding;
       continue;
     }
     removeGeneratedProviderCredential(config, provider, params.sourceConfig);
@@ -354,9 +456,10 @@ export function revalidateProviderUseBindingMigration(params: {
           ]
         : []),
     ],
-    changes: Object.entries(bindings).map(
-      ([provider, apiKey]) =>
-        `Bound selected provider ${provider} to ${apiKey.id} with an env SecretRef.`,
+    changes: Object.entries(bindings).map(([provider, binding]) =>
+      binding.apiKey
+        ? `Bound selected provider ${provider} to ${binding.apiKey.id} with an env SecretRef.`
+        : `Declared selected provider ${provider} for its configured credential chain.`,
     ),
   };
 }
@@ -457,7 +560,7 @@ export async function writeProviderUseBindingMigration(
       isConfigIncludeOwnershipError(error)
     ) {
       const selections = Object.entries(checked.bindings)
-        .map(([provider, ref]) => `${provider} (${ref.id})`)
+        .map(([provider, binding]) => `${provider} (${binding.apiKey?.id ?? "credential chain"})`)
         .join(", ");
       const includePaths =
         error instanceof GuardedConfigIncludeWriteError
@@ -493,8 +596,21 @@ export function completeProviderUseBindingMigration(
   try {
     runOpenClawStateWriteTransaction(
       ({ db }) => {
-        if (readLegacyMigrationReceiptFromDatabase(db, sourceKey)) {
-          return;
+        const completed = readLegacyMigrationReceiptFromDatabase(db, sourceKey);
+        if (completed) {
+          let report: unknown;
+          try {
+            report = JSON.parse(completed.reportJson);
+          } catch {
+            report = undefined;
+          }
+          if (
+            isRecord(report) &&
+            typeof report.selectionVersion === "number" &&
+            report.selectionVersion >= SELECTION_VERSION
+          ) {
+            return;
+          }
         }
         recordLegacyMigrationReceipt(db, {
           sourceKey,
@@ -506,7 +622,12 @@ export function completeProviderUseBindingMigration(
           sourceRecordCount: null,
           runId: sourceKey,
           now: Date.now(),
-          reportJson: JSON.stringify({ completed: true, target: "models.providers" }),
+          reportJson: JSON.stringify({
+            completed: true,
+            target: "models.providers",
+            selectionVersion: SELECTION_VERSION,
+          }),
+          upsert: completed !== null,
         });
       },
       { env },

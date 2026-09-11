@@ -6,6 +6,8 @@ import { loadAuthProfileStoreForRuntime } from "../../../agents/auth-profiles.js
 import type { AuthProfileStore } from "../../../agents/auth-profiles/types.js";
 import { persistAuthProfileBatch } from "../../../agents/auth-profiles/upsert-with-lock.js";
 import { resolveProviderUseAdmission } from "../../../agents/provider-model-auth-source-plan.js";
+import { readConfigFileSnapshot } from "../../../config/io.js";
+import { getConfigProviderUseBindings } from "../../../config/resolution-facts.js";
 import {
   loadSessionEntry,
   replaceSessionEntry,
@@ -14,8 +16,14 @@ import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { SecretRef } from "../../../config/types.secrets.js";
 import { acquireFileLockSyncWithRetry } from "../../../infra/file-lock-sync.js";
+import {
+  readLegacyMigrationReceiptFromDatabase,
+  recordLegacyMigrationReceipt,
+  resolveLegacyMigrationSourceKey,
+} from "../../../infra/state-migrations.receipts.js";
 import { resolveProviderBindingEnvVarCandidates } from "../../../secrets/provider-env-vars.js";
 import { runOpenClawAgentWriteTransaction } from "../../../state/openclaw-agent-db.js";
+import { runOpenClawStateWriteTransaction } from "../../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../../state/openclaw-state-db.paths.js";
 import {
   createOpenClawTestState,
@@ -58,6 +66,8 @@ beforeEach(async () => {
       MINIMAX_CODE_PLAN_KEY: undefined,
       MINIMAX_CODING_API_KEY: undefined,
       MINIMAX_OAUTH_TOKEN: undefined,
+      OPENCODE_API_KEY: "fixture-opencode-shared-key",
+      OPENCODE_ZEN_API_KEY: undefined,
       GITHUB_TOKEN: undefined,
       GH_TOKEN: undefined,
       MODEL_API_KEY: undefined,
@@ -85,9 +95,9 @@ function prepare(config: OpenClawConfig) {
 it("defers shared-key bindings without failing when account publication is busy", async () => {
   const migration = prepare(selectedPlan);
   assert(migration.bindings);
-  const locks = path.join(state.stateDir, "locks");
-  await fs.mkdir(locks, { recursive: true });
-  const release = acquireFileLockSyncWithRetry(path.join(locks, "auth-profile-publication"));
+  const release = acquireFileLockSyncWithRetry(
+    path.join(state.stateDir, "auth-profile-publication"),
+  );
   const publish = vi.fn();
   try {
     const result = await writeProviderUseBindingMigration(
@@ -125,6 +135,29 @@ function admitted(config: OpenClawConfig) {
 }
 
 describe("selected shared-provider upgrade", () => {
+  it("persists a selected binding even when validation already supplied its runtime-only facts", async () => {
+    const { prepareDoctorContext } = await import("../../doctor-config-flow.test-support.js");
+    const { runWriteConfigHealth } =
+      await import("../../../flows/doctor-health-contribution-runners.config.js");
+    await state.writeConfig(selectedPlan);
+    const snapshot = await readConfigFileSnapshot({ observe: false });
+    expect(snapshot.sourceConfig.models?.providers?.["byteplus-plan"]).toBeUndefined();
+    expect(getConfigProviderUseBindings(snapshot.sourceConfig)["byteplus-plan"]).toEqual({
+      apiKey: byteplusRef,
+    });
+    expect(prepare(snapshot.sourceConfig).bindings?.["byteplus-plan"]).toEqual({
+      apiKey: byteplusRef,
+    });
+
+    const context = await prepareDoctorContext(state.configPath);
+    await runWriteConfigHealth(context, { runPostWriteRepairs: false });
+
+    expect(
+      JSON.parse(await fs.readFile(state.configPath, "utf8")).models.providers["byteplus-plan"],
+    ).toEqual({ apiKey: byteplusRef });
+    expect(prepare(selectedPlan).pending).toBe(false);
+  });
+
   it("keeps a newly selected shared-key fallback pending at the write recheck", async () => {
     const prepared = prepare(selectedPlan);
     assert(prepared.bindings);
@@ -395,8 +428,8 @@ describe("selected shared-provider upgrade", () => {
             },
           },
           ...(roster === "entries"
-            ? { entries: { main: {}, worker: { model: "minimax/MiniMax-M2.7" } } }
-            : { list: [{ id: "main" }, { id: "worker", model: "minimax/MiniMax-M2.7" }] }),
+            ? { entries: { main: {}, worker: { model: "opencode/fixture-model" } } }
+            : { list: [{ id: "main" }, { id: "worker", model: "opencode/fixture-model" }] }),
         },
       };
       const original = structuredClone(config);
@@ -411,8 +444,8 @@ describe("selected shared-provider upgrade", () => {
           baseUrl: "",
           models: [],
         },
-        minimax: {
-          apiKey: { source: "env", provider: "default", id: "MINIMAX_API_KEY" },
+        opencode: {
+          apiKey: { source: "env", provider: "default", id: "OPENCODE_API_KEY" },
           baseUrl: "",
           models: [],
         },
@@ -420,7 +453,15 @@ describe("selected shared-provider upgrade", () => {
       expect(config).toEqual(original);
       expect(admitted(result.config).has("byteplus-plan")).toBe(true);
       expect(admitted(result.config).has("volcengine-plan")).toBe(true);
-      expect(admitted(result.config).has("minimax-portal")).toBe(false);
+      expect(admitted(result.config).has("opencode")).toBe(true);
+      expect(admitted(result.config).has("opencode-go")).toBe(false);
+      for (const provider of ["minimax", "minimax-portal"]) {
+        expect(result.config.models?.providers?.[provider]).toBeUndefined();
+        expect(admitted(result.config).get(provider)).toEqual({
+          kind: "environment",
+          envVar: "MINIMAX_API_KEY",
+        });
+      }
       const second = prepare(result.config);
       expect(second.config).toBe(result.config);
       expect(second.changes).toEqual([]);
@@ -462,14 +503,14 @@ describe("selected shared-provider upgrade", () => {
         model: "plan",
         models: { "volcengine-plan/ark-code-latest": { alias: "plan" } },
       };
-      const inherited = { models: { "minimax/MiniMax-M2.7": { alias: "plan" } } };
+      const inherited = { models: { "opencode/fixture-model": { alias: "plan" } } };
       const config: OpenClawConfig = {
         agents: {
           defaults: {
             model: "plan",
             models: {
               "byteplus-plan/ark-code-latest": { alias: "plan" },
-              "minimax-portal/MiniMax-M2.7": { alias: "unused" },
+              "opencode-go/fixture-model": { alias: "unused" },
             },
           },
           ...(roster === "entries"
@@ -489,7 +530,7 @@ describe("selected shared-provider upgrade", () => {
 
       expect(Object.keys(result.config.models?.providers ?? {}).toSorted()).toEqual([
         "byteplus-plan",
-        "minimax",
+        "opencode",
         "volcengine-plan",
       ]);
       expect(result.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
@@ -498,11 +539,12 @@ describe("selected shared-provider upgrade", () => {
         provider: "default",
         id: "VOLCANO_ENGINE_API_KEY",
       });
-      expect(result.config.models?.providers?.minimax?.apiKey).toEqual({
+      expect(result.config.models?.providers?.opencode?.apiKey).toEqual({
         source: "env",
         provider: "default",
-        id: "MINIMAX_API_KEY",
+        id: "OPENCODE_API_KEY",
       });
+      expect(admitted(result.config).has("opencode-go")).toBe(false);
       expect(config).toEqual(original);
     },
   );
@@ -537,8 +579,8 @@ describe("selected shared-provider upgrade", () => {
         entry: {
           sessionId: "pin-auto",
           updatedAt: 3,
-          providerOverride: "minimax",
-          modelOverride: "MiniMax-M2.7",
+          providerOverride: "opencode",
+          modelOverride: "fixture-model",
           modelOverrideSource: "auto",
         },
       },
@@ -548,8 +590,8 @@ describe("selected shared-provider upgrade", () => {
         entry: {
           sessionId: "pin-default",
           updatedAt: 4,
-          providerOverride: "minimax-portal",
-          modelOverride: "MiniMax-M2.7",
+          providerOverride: "opencode-go",
+          modelOverride: "fixture-model",
           modelOverrideSource: "default",
         },
       },
@@ -559,8 +601,8 @@ describe("selected shared-provider upgrade", () => {
         entry: {
           sessionId: "pin-legacy-auto",
           updatedAt: 5,
-          providerOverride: "minimax-portal",
-          modelOverride: "MiniMax-M2.7",
+          providerOverride: "opencode-go",
+          modelOverride: "fixture-model",
           modelOverrideFallbackOriginProvider: "openai",
           modelOverrideFallbackOriginModel: "fixture-model",
         },
@@ -585,11 +627,11 @@ describe("selected shared-provider upgrade", () => {
     ]);
     expect(result.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
     expect(scopes.map((scope) => loadSessionEntry(scope))).toEqual(before);
-    expect(admitted(result.config).has("minimax")).toBe(false);
-    expect(admitted(result.config).has("minimax-portal")).toBe(false);
+    expect(admitted(result.config).has("opencode")).toBe(false);
+    expect(admitted(result.config).has("opencode-go")).toBe(false);
   });
 
-  it("does not bind unselected siblings or selected generic credential providers", async () => {
+  it("declares selected chain providers without activating generic credentials or unselected siblings", async () => {
     const config: OpenClawConfig = {
       agents: {
         defaults: {
@@ -621,11 +663,141 @@ describe("selected shared-provider upgrade", () => {
       env,
     });
 
-    expect(result.config).toBe(config);
-    expect(result.changes).toEqual([]);
+    expect(result.bindings).toEqual({ "amazon-bedrock": {}, "google-vertex": {} });
+    expect(Object.keys(result.config.models?.providers ?? {})).toEqual([
+      "amazon-bedrock",
+      "google-vertex",
+    ]);
     expect(result.pending).toBe(true);
-    expect(result.config.models?.providers).toBeUndefined();
+    const unselected = prepareProviderUseBindingMigration({
+      config: {},
+      configPath: state.configPath,
+      env,
+    });
+    expect(unselected.config.models?.providers).toBeUndefined();
   });
+
+  it.each(["amazon-bedrock", "amazon-bedrock-mantle", "google-vertex"])(
+    "preserves a stored account instead of materializing a chain declaration for %s",
+    async (provider) => {
+      await state.writeAuthProfiles(
+        {
+          version: 1,
+          profiles: {
+            [`${provider}:saved`]: { type: "api_key", provider, key: "fixture-saved-account" },
+          },
+        },
+        "other",
+      );
+      const config: OpenClawConfig = {
+        agents: { defaults: { model: `${provider}/fixture` }, entries: { main: {} } },
+      };
+      const result = prepare(config);
+      expect(result.config).toBe(config);
+      expect(result.pending).toBe(false);
+      expect(result.warnings?.join("\n")).toContain(`${provider}:saved`);
+    },
+  );
+
+  it("repairs a narrow receipt for new selectors while respecting an old primary binding removal", () => {
+    const sourceKey = resolveLegacyMigrationSourceKey(
+      "selected-shared-provider-bindings:v1",
+      state.configPath,
+    );
+    runOpenClawStateWriteTransaction(
+      ({ db }) =>
+        recordLegacyMigrationReceipt(db, {
+          sourceKey,
+          migrationKind: "selected-shared-provider-bindings:v1",
+          sourcePath: state.configPath,
+          targetTable: "migration_sources",
+          sourceSha256: null,
+          sourceSizeBytes: null,
+          sourceRecordCount: null,
+          runId: sourceKey,
+          now: 1,
+          reportJson: JSON.stringify({ completed: true, target: "models.providers" }),
+        }),
+      { env: state.env },
+    );
+    const config: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: "byteplus-plan/ark-code-latest",
+          subagents: { model: "volcengine-plan/ark-code-latest" },
+          utilityModel: "google-vertex/fixture",
+        },
+        entries: { main: {} },
+      },
+    };
+
+    const result = prepare(config);
+
+    expect(result.config.models?.providers?.["byteplus-plan"]).toBeUndefined();
+    expect(result.bindings).toEqual({
+      "volcengine-plan": {
+        apiKey: { source: "env", provider: "default", id: "VOLCANO_ENGINE_API_KEY" },
+      },
+      "google-vertex": {},
+    });
+    expect(completeProviderUseBindingMigration(state.configPath, state.env)).toEqual([]);
+    const receipt = runOpenClawStateWriteTransaction(
+      ({ db }) => readLegacyMigrationReceiptFromDatabase(db, sourceKey),
+      { env: state.env },
+    );
+    expect(JSON.parse(receipt?.reportJson ?? "null")).toMatchObject({ selectionVersion: 2 });
+    expect(prepare(config)).toEqual({ config, changes: [], pending: false });
+  });
+
+  it.each(["provider-config", "profile"] as const)(
+    "does not require a shared env variable when %s already binds the selected provider",
+    async (source) => {
+      const config: OpenClawConfig = {
+        ...selectedPlan,
+        ...(source === "provider-config"
+          ? {
+              models: {
+                providers: {
+                  "byteplus-plan": { apiKey: "fixture-explicit-account", baseUrl: "", models: [] },
+                },
+              },
+            }
+          : {}),
+      };
+      if (source === "profile") {
+        await state.writeAuthProfiles({
+          version: 1,
+          profiles: {
+            "byteplus-plan:saved": {
+              type: "api_key",
+              provider: "byteplus-plan",
+              key: "fixture-saved-account",
+            },
+          },
+        });
+      }
+      const env = { ...state.env, BYTEPLUS_API_KEY: undefined };
+
+      const result = prepareProviderUseBindingMigration({
+        config,
+        configPath: state.configPath,
+        env,
+      });
+
+      expect(result.config).toBe(config);
+      expect(result.changes).toEqual([]);
+      expect(result.warnings).toBeUndefined();
+      expect(result.pending).toBe(true);
+      expect(completeProviderUseBindingMigration(state.configPath, env)).toEqual([]);
+      expect(
+        prepareProviderUseBindingMigration({ config, configPath: state.configPath, env }),
+      ).toEqual({
+        config,
+        changes: [],
+        pending: false,
+      });
+    },
+  );
 
   it("preserves an existing selected account instead of replacing it with a shared env key", async () => {
     await state.writeAuthProfiles({

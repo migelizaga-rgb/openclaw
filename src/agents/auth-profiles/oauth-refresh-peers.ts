@@ -2,10 +2,10 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolvePathViaExistingAncestorSync } from "../../infra/boundary-path.js";
 import { toErrorObject } from "../../infra/errors.js";
 import { isUserModelAuthProfileId } from "../../state/user-model-account-id.js";
+import { updateCandidateAuthProfileStore } from "./candidate-store-update.js";
 import {
   listCandidateAuthProfileStores,
   loadCandidateAuthProfileStore,
-  updateCandidateAuthProfileStore,
   type CandidateAuthProfileStore,
 } from "./candidate-stores.js";
 import { hasUsableOAuthCredential } from "./credential-state.js";

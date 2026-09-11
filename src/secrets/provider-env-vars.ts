@@ -6,6 +6,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import { createInstalledPluginEnabledPredicate } from "../plugins/installed-plugin-index.js";
+import { passesManifestOwnerBasePolicy } from "../plugins/manifest-owner-policy.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import {
   isWorkspacePluginAllowedByConfig,
@@ -40,6 +41,11 @@ export type ProviderEnvVarLookupParams = {
   includeUntrustedWorkspacePlugins?: boolean;
   metadataSnapshot?: PluginMetadataSnapshot;
 };
+
+/** Direct chat-provider credential declarations retain the plugin that owns each variable. */
+export type ProviderBindingEnvVarCandidates = Readonly<
+  Record<string, readonly { pluginId: string; envVars: readonly string[] }[]>
+>;
 
 /** Manifest-provided evidence that a provider auth credential exists outside config. */
 export type ProviderAuthEvidence = {
@@ -210,14 +216,34 @@ function resolveManifestProviderAuthEnvVarCandidates(
 /** Direct manifest bindings exclude auth aliases and legacy lookup fallbacks. */
 export function resolveProviderBindingEnvVarCandidates(
   params: ProviderEnvVarLookupParams & { manifestPlugins?: readonly PluginManifestRecord[] } = {},
-): Record<string, readonly string[]> {
-  return resolveManifestProviderAuthEnvVarCandidates(
-    { ...params, includeUntrustedWorkspacePlugins: false },
-    params.manifestPlugins
-      ? { plugins: params.manifestPlugins }
-      : resolveProviderMetadataSnapshot(params),
-    [],
-  );
+): ProviderBindingEnvVarCandidates {
+  const plugins = params.manifestPlugins ?? resolveProviderMetadataSnapshot(params).plugins;
+  const normalizedConfig = normalizePluginsConfig(params.config?.plugins);
+  const candidates: Record<string, Array<{ pluginId: string; envVars: readonly string[] }>> = {};
+  for (const plugin of plugins) {
+    if (
+      !shouldUsePluginProviderEnvVars(plugin, {
+        ...params,
+        includeUntrustedWorkspacePlugins: false,
+      }) ||
+      !passesManifestOwnerBasePolicy({
+        plugin,
+        normalizedConfig,
+        allowRestrictiveAllowlistBypass: plugin.origin === "bundled",
+      })
+    ) {
+      continue;
+    }
+    const modelProviders = new Set((plugin.providers ?? []).map(normalizeProviderId));
+    for (const provider of plugin.setup?.providers ?? []) {
+      const providerId = normalizeProviderId(provider.id);
+      if (!modelProviders.has(providerId) || !provider.envVars?.length) {
+        continue;
+      }
+      (candidates[providerId] ??= []).push({ pluginId: plugin.id, envVars: provider.envVars });
+    }
+  }
+  return candidates;
 }
 
 function resolveManifestRuntimeAuthFacts(

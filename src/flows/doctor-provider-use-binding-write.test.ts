@@ -3,10 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDoctorPrompter } from "../commands/doctor-prompter.js";
-import { prepareProviderUseBindingMigration } from "../commands/doctor/shared/provider-use-binding-migration.js";
+import {
+  prepareProviderUseBindingMigration,
+  type ProviderUseBindingMigrationBindings,
+} from "../commands/doctor/shared/provider-use-binding-migration.js";
 import { readConfigFileSnapshot } from "../config/io.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { SecretRef } from "../config/types.secrets.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
@@ -24,6 +26,65 @@ afterEach(async () => {
   await state?.cleanup();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it("warns on a read-only config lock without writing a binding or completion receipt", async () => {
+  state = await createOpenClawTestState({
+    label: "readonly-provider-binding",
+    env: {
+      BYTEPLUS_API_KEY: "fixture-env-account",
+      OPENCLAW_BUNDLED_PLUGINS_DIR: fileURLToPath(new URL("../../extensions/", import.meta.url)),
+      OPENCLAW_DISABLE_BUNDLED_PLUGINS: "0",
+    },
+  });
+  const config: OpenClawConfig = {
+    agents: { defaults: { model: "byteplus-plan/ark-code-latest" }, entries: { main: {} } },
+  };
+  await state.writeConfig(config);
+  const original = await fs.readFile(state.configPath, "utf8");
+  const prepared = prepareProviderUseBindingMigration({
+    config,
+    configPath: state.configPath,
+    env: state.env,
+  });
+  expect(prepared.bindings).toHaveProperty("byteplus-plan");
+  const open = fs.open;
+  vi.spyOn(fs, "open").mockImplementation((file, ...args) => {
+    if (String(file) === `${state.configPath}.lock`) {
+      return Promise.reject(
+        Object.assign(new Error("read-only filesystem"), { code: "EROFS", path: String(file) }),
+      );
+    }
+    return open(file, ...args);
+  });
+  const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+  const options = { repair: true, nonInteractive: true };
+  const ctx: DoctorHealthFlowContext = {
+    runtime,
+    options,
+    prompter: createDoctorPrompter({ runtime, options }),
+    cfg: prepared.config,
+    cfgForPersistence: config,
+    configPath: state.configPath,
+    sourceConfigValid: true,
+    env: state.env,
+    configResult: {
+      cfg: prepared.config,
+      shouldWriteConfig: true,
+      providerUseBindings: prepared.bindings,
+      providerUseBindingMigrationPending: prepared.pending,
+    },
+  };
+  await expect(runWriteConfigHealth(ctx, { runPostWriteRepairs: false })).resolves.toBeUndefined();
+  expect(await fs.readFile(state.configPath, "utf8")).toBe(original);
+  expect(note).toHaveBeenCalledWith(
+    expect.stringContaining(`read-only config ${state.configPath}`),
+    "Doctor warnings",
+  );
+  expect(
+    prepareProviderUseBindingMigration({ config, configPath: state.configPath, env: state.env })
+      .pending,
+  ).toBe(true);
 });
 
 it.each(
@@ -55,11 +116,11 @@ it.each(
       configPath: state.configPath,
       env: state.env,
     });
-    const bindings: Record<string, SecretRef> = {
-      "byteplus-plan": { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
+    const bindings: ProviderUseBindingMigrationBindings = {
+      "byteplus-plan": { apiKey: { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" } },
     };
     expect(prepared.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(
-      bindings["byteplus-plan"],
+      bindings["byteplus-plan"]?.apiKey,
     );
     const endpoint = "https://example.com/repaired-provider";
     const cfg = structuredClone(prepared.config);
@@ -176,7 +237,7 @@ it.each(
       env: state.env,
     });
     expect(prepared.bindings).toEqual({
-      "byteplus-plan": { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
+      "byteplus-plan": { apiKey: { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" } },
     });
     const cfg = structuredClone(prepared.config);
     if (repairRoot) {

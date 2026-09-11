@@ -26,6 +26,26 @@ function collectImplicitFallbackClobberWarnings(cfg: OpenClawConfig): string[] {
 }
 
 describe("doctor config analysis helpers", () => {
+  it.each(["opencode", "opencode-go"])(
+    "keeps an auth-only %s binding out of catalog cleanup advice",
+    (provider) => {
+      noteMock.mockClear();
+      noteOpencodeProviderOverrides(
+        {
+          models: {
+            providers: {
+              [provider]: {
+                apiKey: { source: "env", provider: "default", id: "OPENCODE_API_KEY" },
+              },
+            },
+          },
+        },
+        { opencodePluginActive: true, opencodeGoPluginActive: true },
+      );
+      expect(noteMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("describes OpenCode overrides against the plugin-provided catalog", () => {
     noteMock.mockClear();
 
@@ -49,6 +69,9 @@ describe("doctor config analysis helpers", () => {
       "OpenCode",
     );
     expect(noteMock.mock.calls.at(-1)?.[0]).not.toContain("built-in");
+    expect(noteMock.mock.calls.at(-1)?.[0]).toContain(
+      "Keep each provider entry and its apiKey binding",
+    );
   });
 
   it("classifies external OpenCode overrides only while their plugins are active", () => {

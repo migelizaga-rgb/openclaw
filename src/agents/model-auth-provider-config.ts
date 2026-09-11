@@ -5,6 +5,7 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { resolveMergedModelProviderEntry } from "../config/model-provider-config.js";
 import {
   getResolvedConfigEnvSecretRef,
+  resolveConfigProviderUseBindings,
   resolveConfigSecretRef,
 } from "../config/resolution-facts.js";
 import {
@@ -96,13 +97,14 @@ export function resolveProviderConfig(
 }
 
 function resolveProviderSourceConfig(cfg: OpenClawConfig | undefined, provider: string) {
-  return providerConfigMatchesRuntimeSnapshot({
+  const source = providerConfigMatchesRuntimeSnapshot({
     inputConfig: cfg,
     runtimeConfig: getRuntimeConfigSnapshot(),
     provider,
   })
     ? (getRuntimeConfigSourceSnapshot() ?? cfg)
     : cfg;
+  return source ? resolveConfigProviderUseBindings(source) : source;
 }
 
 /** Keeps authored references distinct from opaque bytes in a matching runtime provider. */

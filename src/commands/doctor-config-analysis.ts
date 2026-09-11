@@ -4,12 +4,14 @@ import { resolvePrimaryStringValue } from "@openclaw/normalization-core/string-c
 import type { ZodIssue } from "zod";
 import { note } from "../../packages/terminal-core/src/note.js";
 import { listAgentEntries } from "../agents/agent-scope-config.js";
+import { resolveProviderEnvironmentAdmission } from "../agents/provider-model-auth-source-plan.js";
 import { CONFIG_PATH } from "../config/config.js";
 import { INCLUDE_KEY } from "../config/includes.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { OpenClawSchema } from "../config/zod-schema.js";
 import { isPathInside } from "../infra/path-guards.js";
+import { resolveProviderBindingEnvVarCandidates } from "../secrets/provider-env-vars.js";
 import { isRecord } from "../utils.js";
 
 type UnrecognizedKeysIssue = ZodIssue & {
@@ -152,7 +154,26 @@ export function stripUnknownConfigKeys(config: OpenClawConfig): {
   return { config: next, removed };
 }
 
-/** Warns when legacy OpenCode overrides shadow an active plugin-provided catalog. */
+/** Explains why present credentials do not select a model provider. */
+export function noteProviderEnvOwnershipConflicts(cfg: OpenClawConfig): void {
+  const { conflicts } = resolveProviderEnvironmentAdmission({
+    providerEnvVars: resolveProviderBindingEnvVarCandidates({ config: cfg }),
+  });
+  if (conflicts.length === 0) {
+    return;
+  }
+  note(
+    conflicts
+      .map(
+        ({ envVar, pluginIds, providers }) =>
+          `${envVar} is set, but model plugins ${pluginIds.join(", ")} share its declaration. Keep explicit provider bindings for the identities you use (${providers.map((provider) => `models.providers.${provider}`).join(", ")}); the variable alone cannot choose between them.`,
+      )
+      .join("\n"),
+    "Provider credentials",
+  );
+}
+
+/** Warns when catalog fields shadow an active plugin-provided catalog. */
 export function noteOpencodeProviderOverrides(
   cfg: OpenClawConfig,
   options: { opencodePluginActive?: boolean; opencodeGoPluginActive?: boolean } = {},
@@ -163,13 +184,15 @@ export function noteOpencodeProviderOverrides(
   }
 
   const overrides: string[] = [];
-  if (options.opencodePluginActive === true && providers.opencode) {
+  const hasOverride = (id: string) =>
+    Object.keys(providers[id] ?? {}).some((key) => key !== "apiKey");
+  if (options.opencodePluginActive === true && hasOverride("opencode")) {
     overrides.push("opencode");
   }
-  if (options.opencodePluginActive === true && providers["opencode-zen"]) {
+  if (options.opencodePluginActive === true && hasOverride("opencode-zen")) {
     overrides.push("opencode-zen");
   }
-  if (options.opencodeGoPluginActive === true && providers["opencode-go"]) {
+  if (options.opencodeGoPluginActive === true && hasOverride("opencode-go")) {
     overrides.push("opencode-go");
   }
   if (overrides.length === 0) {
@@ -190,7 +213,7 @@ export function noteOpencodeProviderOverrides(
   });
 
   lines.push(
-    "- Remove these entries to restore per-model API routing + costs (then re-run setup if needed).",
+    "- Remove catalog and transport overrides to restore per-model API routing + costs. Keep each provider entry and its apiKey binding.",
   );
   note(lines.join("\n"), "OpenCode");
 }

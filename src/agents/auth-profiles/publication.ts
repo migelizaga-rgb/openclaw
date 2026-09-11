@@ -25,7 +25,8 @@ export function withAuthProfilePublicationLock<T>(env: NodeJS.ProcessEnv, publis
 }
 
 function acquireAuthProfilePublicationLock(env: NodeJS.ProcessEnv): () => void {
-  const directory = path.join(captureAuthProfileOwnerScope(env).stateDir, "locks");
+  // Keep the lock in the owner root so release leaves no staged migration artifacts.
+  const directory = captureAuthProfileOwnerScope(env).stateDir;
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const lockPath = path.join(fs.realpathSync(directory), "auth-profile-publication");
   const pending = pendingPublicationLockReleases.get(lockPath);

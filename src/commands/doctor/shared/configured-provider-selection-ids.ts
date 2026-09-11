@@ -1,8 +1,27 @@
 // Reads provider ids selected by auth, model, channel, and media configuration.
-import { collectConfiguredModelRefs } from "@openclaw/model-catalog-core/configured-model-refs";
+import {
+  collectConfiguredModelRefs,
+  listModelRefsFromConfigValue,
+} from "@openclaw/model-catalog-core/configured-model-refs";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeNullableString as normalizeId } from "@openclaw/normalization-core/string-coerce";
+import { listAgentIds, tryResolveAmbientOwnerAgentId } from "../../../agents/agent-scope-config.js";
+import {
+  collectSelectedModelProviders,
+  resolveDefaultModelForAgent,
+} from "../../../agents/model-selection-config.js";
+import {
+  buildModelAliasIndex,
+  resolveModelRefFromString,
+} from "../../../agents/model-selection-shared.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { resolveCronJobsStorePathFromConfig } from "../../../cron/store.js";
+import { cronStoreKey } from "../../../cron/store/key.js";
+import { loadedCronStoreFromRows, loadCronRows } from "../../../cron/store/row-codec.js";
+import { parseAgentSessionKey } from "../../../routing/session-key.js";
+import { withExistingOpenClawStateDatabaseReadOnly } from "../../../state/openclaw-state-db-readonly.js";
+import { tableExists } from "../../../state/openclaw-state-db-schema-helpers.js";
 
 function collectConfiguredProviderIds(cfg: OpenClawConfig): Set<string> {
   const ids = new Set<string>();
@@ -19,8 +38,7 @@ function collectConfiguredProviderIds(cfg: OpenClawConfig): Set<string> {
     add(providerId);
   }
   const modelByChannel = asNullableRecord(cfg.channels?.modelByChannel);
-  for (const [providerId, channelMap] of Object.entries(modelByChannel ?? {})) {
-    add(providerId);
+  for (const channelMap of Object.values(modelByChannel ?? {})) {
     for (const modelRef of Object.values(asNullableRecord(channelMap) ?? {})) {
       if (typeof modelRef !== "string") {
         continue;
@@ -40,6 +58,97 @@ function collectConfiguredProviderIds(cfg: OpenClawConfig): Set<string> {
     }
   }
   return ids;
+}
+
+export type ConfiguredProviderUseSelection = {
+  agentId: string;
+  provider: string;
+  /** Version one already covered primary/fallback selections. */
+  previouslyCovered: boolean;
+};
+
+/** Resolve every executable selector in its agent scope; catalog aliases alone are not use. */
+export function collectConfiguredProviderUseSelections(params: {
+  config: OpenClawConfig;
+  env: NodeJS.ProcessEnv;
+  agentIds?: Iterable<string>;
+}): ConfiguredProviderUseSelection[] {
+  const { config, env } = params;
+  const selections: ConfiguredProviderUseSelection[] = [
+    ...(params.agentIds ?? listAgentIds(config)),
+  ].flatMap((agentId) =>
+    collectSelectedModelProviders({ cfg: config, agentId }).map(({ provider, mainModel }) => ({
+      agentId,
+      provider,
+      previouslyCovered: mainModel,
+    })),
+  );
+  const contexts = new Map<
+    string,
+    {
+      defaultProvider: string;
+      aliasIndex: ReturnType<typeof buildModelAliasIndex>;
+    }
+  >();
+  const add = (agentId: string, raw: string, previouslyCovered: boolean) => {
+    let context = contexts.get(agentId);
+    const selection = {
+      cfg: config,
+      agentId,
+      allowManifestNormalization: false,
+      allowPluginNormalization: false,
+    };
+    if (!context) {
+      const defaultProvider = resolveDefaultModelForAgent(selection).provider;
+      context = {
+        defaultProvider,
+        aliasIndex: buildModelAliasIndex({ ...selection, defaultProvider }),
+      };
+      contexts.set(agentId, context);
+    }
+    const resolved = resolveModelRefFromString({ ...selection, ...context, raw });
+    if (resolved) {
+      selections.push({
+        agentId,
+        provider: normalizeProviderId(resolved.ref.provider),
+        previouslyCovered,
+      });
+    }
+  };
+  const storePath = resolveCronJobsStorePathFromConfig(config, env);
+  const cron = withExistingOpenClawStateDatabaseReadOnly(
+    ({ db }) =>
+      tableExists(db, "cron_jobs")
+        ? loadedCronStoreFromRows(loadCronRows(db, cronStoreKey(storePath)))
+        : undefined,
+    { env },
+  );
+  if (cron?.invalidConfigRows.length) {
+    throw new Error("Cannot complete provider migration with unreadable cron selections.");
+  }
+  for (const job of [...(cron?.store.jobs ?? []), ...(cron?.configJobs ?? [])]) {
+    const record = asNullableRecord(job);
+    const payload = asNullableRecord(record?.payload);
+    const values = listModelRefsFromConfigValue({
+      primary: payload?.model,
+      fallbacks: payload?.fallbacks,
+    });
+    if (values.length === 0) {
+      continue;
+    }
+    const agentId =
+      normalizeId(record?.agentId) ??
+      normalizeId(asNullableRecord(record?.owner)?.agentId) ??
+      parseAgentSessionKey(normalizeId(record?.sessionKey) ?? "")?.agentId ??
+      tryResolveAmbientOwnerAgentId(config);
+    if (!agentId) {
+      throw new Error("Cannot complete provider migration without the selected cron agent owner.");
+    }
+    for (const value of values) {
+      add(agentId, value, false);
+    }
+  }
+  return selections;
 }
 
 function collectConfiguredMediaProviderIds(cfg: OpenClawConfig): Set<string> {

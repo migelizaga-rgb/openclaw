@@ -6,15 +6,9 @@ import { resolvePathViaExistingAncestorSync } from "../../infra/boundary-path.js
 import { isErrno } from "../../infra/errno.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { listOpenClawRegisteredAgentDatabases } from "../../state/openclaw-agent-db-registry-listing.js";
-import { runOpenClawAgentWriteTransaction } from "../../state/openclaw-agent-db.js";
 import { listAgentEntries, resolveAgentDir } from "../agent-scope.js";
-import { AUTH_STORE_VERSION } from "./constants.js";
-import {
-  loadPersistedAuthProfileStore,
-  loadPersistedAuthProfileStoreAtDatabasePath,
-} from "./persisted.js";
-import { resolveAuthProfileDatabasePath, resolveAuthProfileStoreOwner } from "./sqlite.js";
-import { saveAuthProfileStoreWithPreparedOwner } from "./store-runtime.js";
+import { loadPersistedAuthProfileStoreAtDatabasePath } from "./persisted.js";
+import { resolveAuthProfileDatabasePath } from "./sqlite.js";
 import type { AuthProfileStore } from "./types.js";
 
 export type CandidateAuthProfileStore = {
@@ -113,51 +107,4 @@ export function loadCandidateAuthProfileStore(
   candidate: CandidateAuthProfileStore,
 ): AuthProfileStore | null {
   return loadPersistedAuthProfileStoreAtDatabasePath(candidate.databasePath, "agent");
-}
-
-/**
- * Update one exact candidate database in a single synchronous SQLite
- * transaction. Callers serialize candidates externally; this never holds two
- * database transactions at once.
- */
-export function updateCandidateAuthProfileStore(params: {
-  candidate: CandidateAuthProfileStore;
-  preserveProfileState?: boolean;
-  profileId: string;
-  updater: (store: AuthProfileStore) => boolean;
-}): { changed: boolean; store: AuthProfileStore } {
-  return runOpenClawAgentWriteTransaction(
-    (database) => {
-      const store = loadPersistedAuthProfileStore(params.candidate.agentDir, { database }) ?? {
-        version: AUTH_STORE_VERSION,
-        profiles: {},
-      };
-      const changed = params.updater(store);
-      if (changed) {
-        const profileIds = [params.profileId];
-        saveAuthProfileStoreWithPreparedOwner(
-          store,
-          params.candidate.agentDir,
-          {
-            filterExternalAuthProfiles: false,
-            syncExternalCli: false,
-            ...(params.preserveProfileState
-              ? {
-                  preserveOrderProfileIds: profileIds,
-                  preserveStateProfileIds: profileIds,
-                }
-              : {}),
-          },
-          database,
-          resolveAuthProfileStoreOwner(database, params.candidate.env),
-        );
-      }
-      return { changed, store };
-    },
-    {
-      agentId: params.candidate.agentId,
-      env: params.candidate.env,
-      path: params.candidate.databasePath,
-    },
-  );
 }

@@ -61,6 +61,13 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
 
 > JSON5 lets you use comments and trailing commas. Regular JSON works too.
 
+The provider-specific OpenRouter and Groq variables below work without extra
+provider entries. A key claimed by different model plugins, such as an OpenCode
+Zen/Go key, needs an explicit binding for the selected provider. An existing
+route may receive an in-memory upgrade binding at startup; only
+`openclaw doctor --fix` persists that repair. See
+[Model provider bindings](/concepts/model-providers#when-credentials-enable-a-provider).
+
 ```json5
 {
   // Environment + shell

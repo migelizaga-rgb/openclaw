@@ -812,6 +812,12 @@ export async function modelsStatusCommand(
             aliasMap,
             envCandidateMap,
             authEvidenceMap,
+            selectedEnvironmentVariable: providerUses.find(
+              (usage) =>
+                normalizeProviderId(usage.provider) === normalizeProviderId(provider) &&
+                usage.evaluation.availability === true &&
+                usage.evaluation.environmentVariable !== undefined,
+            )?.evaluation.environmentVariable,
           }),
         )
         .filter((entry) => {
@@ -1529,6 +1535,8 @@ export async function modelsStatusCommand(
           const hint = buildProviderAuthRecoveryHint({
             provider,
             config: cfg,
+            workspaceDir,
+            env: process.env,
             includeEnvVar: !requiresSubscription,
           });
           runtime.log(`- ${theme.heading(provider)} ${hint}`);

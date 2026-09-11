@@ -32,6 +32,23 @@ export function resolveAgentModelFallbackValues(model?: AgentModelInput): string
   return Array.isArray(model.fallbacks) ? model.fallbacks : [];
 }
 
+/** Distinguishes inherited fallbacks from an explicit local primary or fallback list. */
+export function resolveSelectedModelFallbacksOverride(
+  raw: AgentModelConfig | undefined,
+): string[] | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  if (typeof raw === "string") {
+    return resolvePrimaryStringValue(raw) ? [] : undefined;
+  }
+  // An explicit empty list disables inherited fallbacks.
+  if (!Object.hasOwn(raw, "fallbacks")) {
+    return Object.hasOwn(raw, "primary") && resolvePrimaryStringValue(raw) ? [] : undefined;
+  }
+  return Array.isArray(raw.fallbacks) ? raw.fallbacks : undefined;
+}
+
 /** Returns a positive finite tool timeout rounded down to whole milliseconds. */
 export function resolveAgentModelTimeoutMsValue(model?: AgentToolModelConfig): number | undefined {
   if (!model || typeof model !== "object") {

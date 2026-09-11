@@ -21,45 +21,65 @@ per reader job. Open the page that matches your task.
 
 ## When credentials enable a provider
 
-OpenClaw checks whether a provider is enabled for use before resolving credentials
-for model requests or authenticated model discovery:
+OpenClaw checks a provider's binding before resolving credentials for model
+requests or authenticated model discovery:
 
 - An explicit `models.providers.<id>` entry permits that provider to use its
   supported credentials.
 - Stored auth profiles and native CLI accounts remain bound to their provider.
-- An environment variable alone enables a provider only when exactly one distinct
-  provider ID directly declares it in the plugin manifest's
-  `setup.providers[].envVars`. IDs are compared after trimming and lowercasing;
-  auth aliases do not transfer this permission to another provider.
-- A key shared by multiple declared providers requires an explicit provider entry
-  or a stored profile for the intended provider. This includes OpenCode Zen/Go
-  keys, `MINIMAX_API_KEY`, `KIMI_API_KEY`, `KIMICODE_API_KEY`, `OLLAMA_API_KEY`,
-  `OPENROUTER_API_KEY`, `STEPFUN_API_KEY`, and Qwen's `QWEN_API_KEY`,
-  `DASHSCOPE_API_KEY`, and `MODELSTUDIO_API_KEY`.
+  A selected family route can use an existing account through the provider's
+  authentication alias.
+- A provider-specific environment variable works without a `models.providers`
+  entry when one model-serving plugin owns its declaration. That plugin can
+  bind each of its model-provider IDs that directly names the variable.
+  Kimi, MiniMax, Ollama, and StepFun can therefore use their own declared family
+  keys without extra provider entries. Non-model plugins do not claim chat keys.
+- A variable claimed by different model plugins, such as the shared OpenCode
+  Zen/Go variables, needs an explicit binding for the intended provider.
+  Borrowing another provider's key also requires an explicit provider entry.
 - Generic credentials such as `GH_TOKEN`, `GITHUB_TOKEN`, `MODEL_API_KEY`, the AWS
   credential chain, and Google Application Default Credentials do not enable a
   provider by themselves.
 
-Unique provider keys such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and
-`OPENAI_API_KEY` still work without a `models.providers` entry. Selecting a model
-or setting `discovery.enabled: true` does not grant credential use. Discovery
-settings only control catalog discovery; public catalogs remain browsable.
+Provider keys such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`,
+and `OPENROUTER_API_KEY` still work without a provider entry. If another enabled
+model plugin claims the same variable, Doctor reports the ownership conflict;
+bind the intended provider explicitly. An explicitly disabled plugin does not
+claim the variable.
 
-On upgrade, Gateway startup and `openclaw doctor --fix` use the same one-time
-repair for existing shared-key selections. The repair adds an env SecretRef for
-a provider selected as a primary, fallback, or user-pinned session model only
-when no saved account for that provider or its family exists in any auth scope.
-Saved accounts keep their credential and ordered fallback through the provider's
-authentication alias for the selected route. The repair names conflicting
-profiles so the operator can bind them explicitly; it never writes an env
-reference over a saved account. Notices name variables and providers, never key
-values. Unselected siblings and generic credentials are excluded. Later
-environment-key selections need their own explicit binding.
+For automatic, unpinned selection, an independently bound environment key can
+cover an expired or otherwise unusable saved account. An explicit profile pin
+does not switch accounts this way. An ambiguous or borrowed key is not an
+independently bound fallback.
 
-If Doctor cannot see a selected provider's shared-key variable, it leaves the
-upgrade open and names the missing variable. Rerun Doctor from the service
-environment or with that variable set. A later Gateway startup can finish the
-same repair using the service's environment.
+If a key is present but its model provider is reported as unbound, setting the
+same variable again will not repair the binding. Use `openclaw doctor --fix` for
+an eligible existing selection, or add an explicit provider entry.
+
+`discovery.enabled` controls catalog discovery, not permission to use credentials.
+Public catalogs remain browsable without authentication. Auxiliary capabilities
+such as media, speech, search, and embeddings retain their own authentication
+and selection rules.
+
+On upgrade, Gateway startup and `openclaw doctor --fix` use the same transform
+to preserve existing selected routes. **Startup applies provider bindings only
+in memory: it does not write the config or complete the upgrade receipt.**
+This lets a Gateway with managed or read-only config keep serving an eligible
+route while reporting the exact entry its operator must add.
+
+To persist these upgrades, run `openclaw doctor --fix`. Doctor records completion
+after a successful write. It writes a credential-only env SecretRef for an
+eligible shared-key selection, or a minimal provider declaration for a selected
+cloud credential-chain route. Any saved account for that provider or its family,
+in shared or agent-local storage, blocks a generated env binding. Notices name
+providers, variables, and conflicting profiles, never credential values.
+
+If Doctor cannot see a required variable or cannot write managed config, it
+leaves the upgrade open. Run it from the service environment, or add the reported
+entry to the managed config. A later startup can use the same approved binding
+in memory; it still leaves persistence to Doctor. See
+[Provider upgrade migrations](/gateway/doctor/config-migrations) for selection
+coverage, conflict handling, and examples.
 
 ## Where each section moved
 

@@ -3,6 +3,7 @@ import { collectConfiguredModelRefs } from "@openclaw/model-catalog-core/configu
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { listAgentEntriesWithSource } from "../agents/agent-scope.js";
+import { applyProviderUseBindingsToRuntime } from "../commands/doctor/shared/provider-use-binding-migration.js";
 import { planManifestModelCatalogSuppressions } from "../model-catalog/index.js";
 import { listChannelIdsForOwnershipMigration } from "../plugins/channel-presence-policy.js";
 import { normalizePluginsConfig, normalizePluginId } from "../plugins/config-state.js";
@@ -12,8 +13,6 @@ import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot
 import type { PluginOrigin } from "../plugins/plugin-origin.types.js";
 import { validatePluginSchemaValue } from "../plugins/schema-validator.js";
 import { resolveWebSearchInstallCatalogEntries } from "../plugins/web-search-install-catalog.js";
-import { resolveSecretRefProviderSourceMismatch } from "../secrets/ref-contract.js";
-import { discoverConfigSecretTargets } from "../secrets/target-registry.js";
 import { isRecord } from "../utils.js";
 import { GENERATED_BUNDLED_CHANNEL_CONFIG_METADATA } from "./bundled-channel-config-metadata.generated.js";
 import {
@@ -31,8 +30,9 @@ import { materializeLegacyDefaultAgentRoles } from "./legacy.default-agent-roles
 import { removeLegacyCopilotDiscovery } from "./legacy.github-copilot.js";
 import { migratePersistedImplicitMainRoster } from "./legacy.roster.js";
 import { materializeRuntimeConfig } from "./materialize.js";
+import { resolveConfigPath } from "./paths.js";
+import { copyConfigResolutionFacts } from "./resolution-facts.js";
 import type { ConfigValidationIssue, OpenClawConfig } from "./types.js";
-import { resolveSecretInputRef } from "./types.secrets.js";
 import {
   bundledChannelIds,
   collectChannelDmPolicyDependencyWarnings,
@@ -41,12 +41,12 @@ import {
   normalizeBundledChannelId,
 } from "./validation-channel-rules.js";
 import { collectHeartbeatOwnerWarnings, validateConfigObjectRaw } from "./validation-core.js";
-import { withConfigIssuePath } from "./validation-issues.js";
 import {
   collectExplicitPluginReferences,
   resolveExplicitPluginReferencePath,
   validateExplicitPluginConfig,
 } from "./validation-plugin-config.js";
+import { collectSecretRefProviderSourceIssues } from "./validation-secretrefs.js";
 
 export { validateConfigObject, validateConfigObjectRaw } from "./validation-core.js";
 export { collectUnsupportedSecretRefPolicyIssues } from "./validation-issues.js";
@@ -81,43 +81,6 @@ type RegistryInfo = {
   >;
 };
 
-function collectSecretRefProviderSourceIssues(params: {
-  config: OpenClawConfig;
-  env?: NodeJS.ProcessEnv;
-  manifestRegistry: PluginManifestRegistry;
-}): ConfigValidationIssue[] {
-  const issues: ConfigValidationIssue[] = [];
-  for (const target of discoverConfigSecretTargets(params.config, {
-    env: params.env,
-    manifestRegistry: params.manifestRegistry,
-  })) {
-    const { ref } = resolveSecretInputRef({
-      value: target.value,
-      refValue: target.refValue,
-      defaults: params.config.secrets?.defaults,
-    });
-    if (!ref) {
-      continue;
-    }
-    const configuredSource = resolveSecretRefProviderSourceMismatch(params.config, ref);
-    if (!configuredSource) {
-      continue;
-    }
-    const path = target.refPath ?? target.path;
-    const pathSegments = target.refPathSegments ?? target.pathSegments;
-    issues.push(
-      withConfigIssuePath(
-        {
-          path,
-          message: `Secret provider "${ref.provider}" has source "${configuredSource}" but ref requests "${ref.source}".`,
-        },
-        pathSegments,
-      ),
-    );
-  }
-  return issues;
-}
-
 export function validateConfigObjectWithPlugins(
   raw: unknown,
   params?: ValidateConfigWithPluginsParams,
@@ -144,7 +107,7 @@ function validateConfigObjectWithPluginMode(
     homedir: params?.homedir,
   }).config as OpenClawConfig;
   let manifestRegistry = params?.pluginMetadataSnapshot?.manifestRegistry;
-  const result = validateConfigObjectWithPluginsBase(migrated, {
+  let result = validateConfigObjectWithPluginsBase(migrated, {
     ...params,
     applyDefaults,
     pluginValidation: params?.pluginValidation ?? "full",
@@ -153,6 +116,30 @@ function validateConfigObjectWithPluginMode(
       manifestRegistry = registry;
     },
   });
+  if (
+    result.ok &&
+    applyDefaults &&
+    params?.pluginValidation !== "core-only" &&
+    params?.semanticValidation !== "strict"
+  ) {
+    const env = params?.env ?? process.env;
+    const migration = applyProviderUseBindingsToRuntime({
+      config: migrated,
+      runtimeConfig: result.config,
+      configPath: resolveConfigPath(env, undefined, params?.homedir),
+      env,
+      manifestRegistry:
+        manifestRegistry ?? resolveConfigWidePluginManifestRegistry({ config: migrated, env }),
+    });
+    result = {
+      ...result,
+      config: migration.config,
+      warnings: [
+        ...result.warnings,
+        ...migration.warnings.map((message) => ({ path: "models.providers", message })),
+      ],
+    };
+  }
   const legacyDefaultAgentId = tryGetLegacyDefaultAgentId(migrated);
   // Core roster normalization already ran; ambient channel ownership belongs to Gateway discovery.
   if (!result.ok || !legacyDefaultAgentId || params?.pluginValidation === "core-only") {
@@ -166,6 +153,7 @@ function validateConfigObjectWithPluginMode(
     params?.env,
     manifestRegistry?.plugins,
   );
+  copyConfigResolutionFacts(result.config, materialized.config);
   return { ...result, config: materialized.config };
 }
 

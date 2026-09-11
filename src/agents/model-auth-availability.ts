@@ -41,6 +41,7 @@ import {
 import { getRuntimeExternalCliProfileIds } from "./auth-profiles/runtime-external-profile-references.js";
 import type { RuntimeAuthMaterialization } from "./auth-profiles/runtime-materializations.js";
 import { getRuntimeAuthProfileStoreSnapshotCore } from "./auth-profiles/runtime-snapshots.js";
+import { isSetupCredentialAccessActive } from "./auth-profiles/setup-access.js";
 import type {
   AuthProfileCredential,
   AuthProfileStore,
@@ -84,6 +85,7 @@ import {
   buildProviderModelAuthSourcePlan,
   fromProviderModelAuthReadiness,
   toProviderModelAuthReadiness,
+  resolveProviderEnvironmentAdmission,
   resolveProviderUseAdmission,
   type ProviderModelAuthEvidence,
   type ProviderModelAuthProfileSource,
@@ -132,6 +134,7 @@ export type ModelAuthAvailabilityEvaluation = {
   selectedProfileId?: string;
   selectedAuthMode?: string;
   evidence?: ModelAuthAvailabilityEvidence;
+  environmentVariable?: string;
   runtimeAuth?: { id: string; source: "native" };
 };
 export type ModelAuthAvailabilityResolver = {
@@ -276,6 +279,7 @@ type AuthSourceEvaluation = Pick<
   | "selectedProfileId"
   | "unavailableReason"
   | "unavailableUntil"
+  | "environmentVariable"
 >;
 
 function modeAllowed(provider: string, target: AuthTarget, mode: string | undefined): boolean {
@@ -413,6 +417,16 @@ export function createModelAuthAvailabilityResolver(
     env,
     metadataSnapshot: params.metadataSnapshot,
   });
+  const providerEnvVars = resolveProviderBindingEnvVarCandidates({
+    config: params.cfg,
+    env,
+    workspaceDir: params.workspaceDir,
+    metadataSnapshot: params.metadataSnapshot,
+  });
+  const environmentBindings = resolveProviderEnvironmentAdmission({
+    env,
+    providerEnvVars,
+  }).bindings;
   const admitted = resolveProviderUseAdmission({
     config: params.cfg,
     env,
@@ -432,12 +446,7 @@ export function createModelAuthAvailabilityResolver(
       ([provider, mode]) =>
         typeof mode === "object" && mode.source === "native" ? [provider] : [],
     ),
-    providerEnvVars: resolveProviderBindingEnvVarCandidates({
-      config: params.cfg,
-      env,
-      workspaceDir: params.workspaceDir,
-      metadataSnapshot: params.metadataSnapshot,
-    }),
+    providerEnvVars,
   });
   const synthetic = new Set(
     (params.syntheticAuthProviderRefs ?? []).map(normalizeProviderIdForAuth),
@@ -489,14 +498,22 @@ export function createModelAuthAvailabilityResolver(
       store,
     });
   const envAuth = (provider: string) => {
-    const binding = admitted.get(normalizeProviderId(provider));
-    if (!binding || binding.kind === "profile") {
+    const admittedBinding = admitted.get(normalizeProviderId(provider));
+    if (admittedBinding?.kind === "profile" && isSetupCredentialAccessActive()) {
+      return null;
+    }
+    const binding =
+      admittedBinding?.kind === "profile"
+        ? environmentBindings.get(normalizeProviderId(provider))
+        : admittedBinding;
+    if (!binding) {
       return null;
     }
     const normalized = normalizeProvider(provider);
-    if (!envCache.has(normalized)) {
+    const cacheKey = normalizeProviderId(provider);
+    if (!envCache.has(cacheKey)) {
       envCache.set(
-        normalized,
+        cacheKey,
         resolveProviderEnvAuthEvidence(normalized, env, {
           aliasMap: binding.kind === "environment" ? {} : aliasMap,
           candidateMap:
@@ -507,7 +524,7 @@ export function createModelAuthAvailabilityResolver(
         }),
       );
     }
-    return envCache.get(normalized);
+    return envCache.get(cacheKey);
   };
   const profileOrder = (
     provider: string,
@@ -693,7 +710,12 @@ export function createModelAuthAvailabilityResolver(
   };
   const unprofiledEvaluation = (provider: string, target: AuthTarget): AuthSourceEvaluation => {
     const admissionBinding = admitted.get(normalizeProviderId(provider));
-    if (!admissionBinding || admissionBinding.kind === "profile") {
+    if (
+      !admissionBinding ||
+      (admissionBinding.kind === "profile" &&
+        (isSetupCredentialAccessActive() ||
+          !environmentBindings.has(normalizeProviderId(provider))))
+    ) {
       return {
         availability: false,
         unavailableReason: admissionBinding ? "auth-failed" : "missing-auth",
@@ -987,6 +1009,7 @@ export function createModelAuthAvailabilityResolver(
         ? { unavailableReason: unavailableReason ?? "auth-failed" }
         : {}),
       selectedAuthMode: source.mode,
+      ...(source.boundEnvVar ? { environmentVariable: source.boundEnvVar } : {}),
     };
   };
   const directPolicy = (provider: string, target: AuthTarget) => {
@@ -1020,6 +1043,13 @@ export function createModelAuthAvailabilityResolver(
       // with no authored material is ambient, so browse cannot widen authority.
       authorization:
         evaluation.evidence === "environment" && !hasDirectMaterial ? "ambient" : "declared",
+      boundEnvVar:
+        !pinned &&
+        !hasDirectMaterial &&
+        !isSetupCredentialAccessActive() &&
+        evaluation.evidence === "environment"
+          ? environmentBindings.get(normalizeProviderId(provider))?.envVar
+          : undefined,
     });
     const hasDirectFallback = hasDirectMaterial || (!pinned && direct.evidence !== "none");
     return {

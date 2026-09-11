@@ -160,6 +160,13 @@ export function selectProviderModelAuthSources(params: {
 
   const { fallback, profiles } = params.plan;
   if (profiles.kind === "all-cooldown") {
+    if (fallback?.boundEnvVar && fallback.readiness === "ready" && !profiles.explicitOrder) {
+      return {
+        kind: "selected",
+        selection: { kind: "selected", source: fallback },
+        attempts: [directAttempt(fallback)],
+      };
+    }
     return {
       kind: "rejected",
       reason: "all-cooldown",
@@ -178,11 +185,11 @@ export function selectProviderModelAuthSources(params: {
       ...(profiles.kind === "all-unavailable" ? { source: profiles.first } : {}),
     };
   }
-  // An ambient credential — one config names nowhere — may serve a provider the
+  // An unbound ambient credential may serve a provider the
   // operator left entirely unconfigured (the documented zero-config
   // `PROVIDER_API_KEY` path), but it must never *succeed* a credential the
   // operator did declare. Those can bill different accounts, so that transition
-  // needs a declaration, not a discovery. `auth.order` filtering already refuses
+  // needs an independent provider binding. `auth.order` filtering already refuses
   // to silently try a declared profile the operator omitted from an explicit
   // order (docs/auth-credential-semantics.md, "Explicit auth order filtering");
   // an undeclared credential cannot rank above that.
@@ -191,7 +198,9 @@ export function selectProviderModelAuthSources(params: {
   // this plan from a narrowed profile list, so an operator who declared only
   // route-incompatible profiles must not be treated as zero-config.
   const authorizedFallback =
-    fallback?.authorization === "ambient" && params.plan.declaredProfileCount > 0
+    fallback?.authorization === "ambient" &&
+    params.plan.declaredProfileCount > 0 &&
+    (!fallback.boundEnvVar || profiles.explicitOrder)
       ? undefined
       : fallback;
   if (profiles.kind === "usable") {

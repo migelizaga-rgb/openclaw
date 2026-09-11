@@ -1,11 +1,19 @@
 // Verifies runtime config snapshots preserve normalized public settings.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveUsableCustomProviderApiKey } from "../agents/model-auth-provider-config.js";
+import { resolveProviderUseAdmission } from "../agents/provider-model-auth-source-plan.js";
+import { createConfigFileSnapshot } from "./io.snapshot-shared.js";
 import {
   cloneConfigWithResolutionFacts,
+  copyConfigResolutionFactsExcept,
   createConfigResolutionFacts,
   getAuthoredConfigSecretRef,
   getConfigResolutionFacts,
+  resolveConfigSecretRef,
   setConfigResolutionFacts,
+  setConfigProviderUseBindings,
+  serializeConfigResolutionFacts,
+  restoreConfigResolutionFacts,
 } from "./resolution-facts.js";
 import {
   createRuntimeConfigReader,
@@ -40,6 +48,101 @@ function resetRuntimeConfigState(): void {
 describe("runtime snapshot state", () => {
   afterEach(() => {
     resetRuntimeConfigState();
+    vi.unstubAllEnvs();
+  });
+
+  it.each([false, true])(
+    "keeps raw env templates unprocessed while carrying runtime bindings: %s",
+    (withBinding) => {
+      const source: OpenClawConfig = {
+        models: {
+          providers: {
+            openai: {
+              apiKey: "${OPENAI_API_KEY}",
+              baseUrl: "https://api.openai.com/v1",
+              models: [],
+            },
+          },
+        },
+      };
+      setConfigProviderUseBindings(
+        source,
+        withBinding
+          ? {
+              "byteplus-plan": {
+                apiKey: { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
+              },
+            }
+          : {},
+      );
+      expect(getConfigResolutionFacts(source)).toBeNull();
+      const transferred = structuredClone(source);
+      restoreConfigResolutionFacts(transferred, serializeConfigResolutionFacts(source));
+      expect(getConfigResolutionFacts(transferred)).toBeNull();
+      expect(
+        resolveConfigSecretRef({
+          config: transferred,
+          path: "models.providers.openai.apiKey",
+          value: transferred.models?.providers?.openai?.apiKey,
+        }),
+      ).toEqual({ source: "env", provider: "default", id: "OPENAI_API_KEY" });
+      expect(
+        resolveProviderUseAdmission({ config: transferred, providerEnvVars: {}, env: {} }).has(
+          "byteplus-plan",
+        ),
+      ).toBe(withBinding);
+      expect(transferred.models?.providers?.["byteplus-plan"]).toBeUndefined();
+    },
+  );
+
+  it("carries approved runtime auth through a worker snapshot without authoring the source", () => {
+    vi.stubEnv("BYTEPLUS_API_KEY", "fixture-runtime-key");
+    const source: OpenClawConfig = {
+      agents: { defaults: { model: "byteplus-plan/ark-code-latest" } },
+    };
+    const bindings = {
+      "byteplus-plan": {
+        apiKey: { source: "env" as const, provider: "default", id: "BYTEPLUS_API_KEY" },
+      },
+    };
+    const runtime: OpenClawConfig = { ...source, models: { providers: bindings } };
+    setConfigProviderUseBindings(runtime, bindings);
+    const snapshot = createConfigFileSnapshot({
+      path: "/fixture/openclaw.json",
+      exists: true,
+      raw: JSON.stringify(source),
+      parsed: source,
+      sourceConfig: source,
+      runtimeConfig: runtime,
+      valid: true,
+      issues: [],
+      warnings: [],
+      legacyIssues: [],
+      resolutionFacts: createConfigResolutionFacts([]),
+    });
+    const transferred = structuredClone(snapshot.sourceConfig);
+    restoreConfigResolutionFacts(
+      transferred,
+      serializeConfigResolutionFacts(snapshot.sourceConfig),
+    );
+    expect(transferred.models).toBeUndefined();
+    expect(JSON.stringify(transferred)).toBe(snapshot.raw);
+    expect(
+      resolveProviderUseAdmission({ config: transferred, providerEnvVars: {}, env: {} }).has(
+        "byteplus-plan",
+      ),
+    ).toBe(true);
+    setRuntimeConfigSnapshot(runtime, transferred);
+    expect(
+      resolveUsableCustomProviderApiKey({ cfg: runtime, provider: "byteplus-plan" })?.apiKey,
+    ).toBe("fixture-runtime-key");
+    const changedSource = structuredClone(transferred);
+    copyConfigResolutionFactsExcept(transferred, changedSource, ["models.providers.byteplus-plan"]);
+    expect(
+      resolveProviderUseAdmission({ config: changedSource, providerEnvVars: {}, env: {} }).has(
+        "byteplus-plan",
+      ),
+    ).toBe(false);
   });
 
   it("pins the first successful load in memory until the snapshot is cleared", () => {

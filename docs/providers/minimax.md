@@ -31,12 +31,15 @@ Referral link for MiniMax Coding Plan (10% off): [MiniMax Coding Plan](https://p
 
 Model refs follow the auth path: `minimax/<model>` for API-key setups, `minimax-portal/<model>` for OAuth setups.
 
-`MINIMAX_API_KEY` is declared for both providers. To use it for model requests,
-run onboarding or explicitly configure the intended `models.providers` entry.
-The environment key alone does not select a provider.
-For an existing selected model, Gateway startup and `openclaw doctor --fix` use
-the same one-time [shared-key upgrade](/concepts/model-providers), which preserves
-saved accounts.
+`MINIMAX_API_KEY` is declared by the MiniMax plugin for both providers, so it
+binds those model identities without extra `models.providers` entries. Choose
+the model ref and account type that match your MiniMax access. Onboarding remains
+the supported way to save an account and region settings.
+
+For automatic, unpinned model selection, an independently bound environment key
+can cover an unusable saved account. Explicit profile pins do not switch accounts.
+See [Provider bindings](/concepts/model-providers) for shared-key upgrade rules;
+startup applies any needed upgrade only in memory, and Doctor owns persistence.
 
 ## Getting started
 
@@ -364,6 +367,9 @@ See [MiniMax Search](/tools/minimax-search) for full web search configuration an
 
   <Accordion title="Fallback example">
     **Best for:** keep your strongest latest-generation model as primary, fail over to MiniMax M2.7. Example below uses Opus as a concrete primary; swap to your preferred latest-gen primary model.
+
+    `MINIMAX_API_KEY` is a direct MiniMax-plugin binding, so this fallback needs
+    no extra provider entry. Configure a separate credential for the primary.
 
     ```json5
     {

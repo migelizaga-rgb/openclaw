@@ -183,8 +183,9 @@ messages and normalizes `stats.cached` into `cacheRead`; legacy
 
 ### Other bundled provider plugins
 
-The auth variables below are credential sources. Shared keys and generic
-credentials still require provider setup or an explicit provider entry; see
+The auth variables below are credential sources. A plugin's directly declared
+family keys can bind its own model providers. Keys shared across different model
+plugins, borrowed keys, and generic credentials require provider setup or an explicit entry; see
 [When credentials enable a provider](/concepts/model-providers#when-credentials-enable-a-provider).
 
 | Provider                                | Id                               | Auth env                                       | Example model                                          |

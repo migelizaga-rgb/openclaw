@@ -64,6 +64,12 @@ export ANTHROPIC_API_KEY="..."
 
 The script creates a Kubernetes Secret with the API key and an auto-generated gateway token, then deploys. If the Secret already exists, it preserves the current gateway token and any provider keys not being changed.
 
+Provider-specific keys such as `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`OPENAI_API_KEY`, and `OPENROUTER_API_KEY` need no extra provider entry.
+Keys shared across different model plugins, borrowed keys, and cloud credential
+chains need a binding for the intended provider. See
+[Provider bindings](/concepts/model-providers#when-credentials-enable-a-provider).
+
 **Option B: create the secret separately**
 
 ```bash
@@ -118,6 +124,12 @@ kubectl rollout restart -n openclaw deploy/openclaw
 ```
 
 Deployments created from the previous template applied ConfigMap edits on every pod start (and discarded any config changes made through OpenClaw). If you relied on that flow, use the reseed commands above after ConfigMap edits.
+
+If you mount the config directly from a read-only ConfigMap instead, keep
+`OPENCLAW_STATE_DIR` on writable storage. Provider-binding upgrades at startup
+apply only in memory and do not modify the ConfigMap or mark the upgrade complete.
+Add the exact provider entry reported by Doctor to your managed config and
+redeploy. `openclaw doctor --fix` persists a binding only when its config is writable.
 
 ### Add providers
 

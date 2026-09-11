@@ -244,7 +244,7 @@ describe("runDoctorConfigPreflight", () => {
     });
   });
 
-  it("binds an env-only selected Plan during startup before Doctor and keeps the write sparse", async () => {
+  it("serves a selected Plan with an in-memory binding while startup leaves the source untouched", async () => {
     await withDoctorConfigPreflightHome(async (home) => {
       await withEnvAsync(
         {
@@ -269,6 +269,7 @@ describe("runDoctorConfigPreflight", () => {
             preparePluginMetadataSnapshot: false,
             skipPluginValidation: false,
           });
+          const original = await fs.readFile(configPath, "utf8");
           const previousCheckpoint = {
             buildIdentity: "previous-build-same-package-version",
             identity: resolveMigrationCheckpointIdentity({
@@ -286,16 +287,20 @@ describe("runDoctorConfigPreflight", () => {
             apiKey: { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
           };
           expect(preflight.snapshot.valid).toBe(true);
-          expect(preflight.baseConfig.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(
-            expected.apiKey,
-          );
+          expect(
+            preflight.snapshot.runtimeConfig.models?.providers?.["byteplus-plan"]?.apiKey,
+          ).toEqual(expected.apiKey);
           const written = await fs.readFile(configPath, "utf8");
-          expect(JSON.parse(written).models.providers).toEqual({ "byteplus-plan": expected });
+          expect(written).toBe(original);
+          expect(
+            preflight.snapshot.sourceConfig.models?.providers?.["byteplus-plan"],
+          ).toBeUndefined();
           expect(written).not.toContain("fixture-byteplus-env-key");
-          expect(noteMock).toHaveBeenCalledWith(
-            expect.stringContaining("Bound selected provider byteplus-plan to BYTEPLUS_API_KEY"),
-            "Doctor changes",
-          );
+          expect(
+            preflight.snapshot.warnings.some((warning) =>
+              warning.message.includes("in memory only"),
+            ),
+          ).toBe(true);
 
           await runDoctorConfigPreflight(startupCheckpointOptions);
 

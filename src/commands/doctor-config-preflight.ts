@@ -645,17 +645,11 @@ export async function runDoctorConfigPreflight(
         automaticConfigRepair,
         activeConfigRepair: Boolean(activeConfigRepair),
         gatewayStartupCheckpointRequired,
-        migrateProviderBindings:
-          gatewayStartupCheckpointRequired &&
-          shouldRecordStartupCheckpoint &&
-          !shouldSkipPluginValidationForDoctorConfigPreflight(),
-        env: startupMigrationEnv,
         lease: startupMigrationLease,
         measure: options.measure,
         beforeStateMigrations: options.beforeStateMigrations,
         readSnapshot: () => readConfigSnapshotForPreflight(false),
         runWithPluginMetadataSnapshot,
-        report: noteStartupStateMigrationResult,
       });
       if (repaired !== configSnapshotRead) {
         configSnapshotRead = repaired;
