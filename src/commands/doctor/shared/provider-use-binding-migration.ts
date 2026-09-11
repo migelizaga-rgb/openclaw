@@ -24,7 +24,7 @@ import {
   setConfigProviderUseBindings,
 } from "../../../config/resolution-facts.js";
 import { resolveResetPreservedSelection } from "../../../config/sessions/reset-preserved-selection.js";
-import { scanDoctorSessionEntriesTolerant } from "../../../config/sessions/session-accessor.js";
+import { scanDoctorSessionEntriesTolerant } from "../../../config/sessions/session-accessor.sqlite-canonical-inventory.js";
 import type { ModelProviderConfigInput } from "../../../config/types.models.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { parseEnvTemplateSecretRef, type SecretRef } from "../../../config/types.secrets.js";
