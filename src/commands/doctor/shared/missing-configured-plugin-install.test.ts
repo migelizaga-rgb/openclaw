@@ -174,9 +174,13 @@ vi.mock("../../../plugins/capability-consent.js", async (importOriginal) => ({
   prepareManagedPluginArtifactConsentHandler,
 }));
 
-function mockCurrentBundledPlugin(pluginId: string, packageName: string): void {
+function mockCurrentBundledPlugin(
+  pluginId: string,
+  packageName: string,
+  rootDir = `/tmp/bundled/${pluginId}`,
+): void {
   mocks.loadInstalledPluginIndex.mockReturnValue({
-    plugins: [{ pluginId, origin: "bundled", packageName, rootDir: `/tmp/bundled/${pluginId}` }],
+    plugins: [{ pluginId, origin: "bundled", packageName, rootDir }],
     diagnostics: [],
     installRecords: {},
   });
@@ -1922,6 +1926,13 @@ describe("repairMissingConfiguredPluginInstalls", () => {
   });
 
   it("removes stale managed install records when the configured plugin is bundled", async () => {
+    const sourceRoot = tempDirs.make("openclaw-bundled-record-retirement-");
+    fs.writeFileSync(path.join(sourceRoot, "package.json"), JSON.stringify({ name: "openclaw" }));
+    fs.mkdirSync(path.join(sourceRoot, "src"));
+    fs.mkdirSync(path.join(sourceRoot, "extensions"));
+    const bundledRoot = path.join(sourceRoot, "dist", "extensions", "bundleddemo");
+    fs.mkdirSync(bundledRoot, { recursive: true });
+    const env = { ...testEnv, OPENCLAW_DEV_SOURCE_ROOT: sourceRoot };
     const records = {
       bundleddemo: {
         source: "npm",
@@ -1957,7 +1968,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
         },
       ],
     });
-    mockCurrentBundledPlugin("bundleddemo", "@openclaw/bundleddemo");
+    mockCurrentBundledPlugin("bundleddemo", "@openclaw/bundleddemo", bundledRoot);
 
     const { repairMissingConfiguredPluginInstalls } =
       await import("./missing-configured-plugin-install.js");
@@ -1972,7 +1983,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
           bundleddemo: { enabled: true, homeserver: "https://bundleddemo.example.org" },
         },
       },
-      env: testEnv,
+      env,
     });
 
     expect(mocks.updateNpmInstalledPlugins).not.toHaveBeenCalled();
@@ -1982,7 +1993,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       {},
       {
         config: expect.any(Object),
-        env: testEnv,
+        env,
       },
     );
     expect(result).toEqual({
