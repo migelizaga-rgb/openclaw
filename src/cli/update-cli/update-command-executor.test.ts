@@ -22,7 +22,7 @@ import type { UpdateRecoveryFence } from "../../infra/update-run-recovery.js";
 import { isChildProcessTreeAlive } from "../../process/child-process-tree.js";
 import { runUtf8CommandWithTimeout } from "../../process/exec.js";
 import { waitForPidToExit } from "../../test-utils/process-tree.js";
-import { updateExecutorEntrypoints } from "../cli-entrypoint.test-support.js";
+import { updateExecutorNativeEntrypoints } from "./update-command-executor-native-runtime.test-support.js";
 import {
   captureUpdateCommandExecutorAuthority,
   releaseUpdateCommandPreflightForHandoff,
@@ -353,7 +353,7 @@ describe("live update executor", () => {
                   "--input-type=module",
                   "-e",
                   `import fs from "node:fs";
-               import {withDelegatedUpdateCommandExecutor,captureUpdateCommandExecutorAuthority} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.owner).href)};
+               import {withDelegatedUpdateCommandExecutor,captureUpdateCommandExecutorAuthority} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.executor).href)};
                const grant=JSON.parse(fs.readFileSync(0,"utf8"));
                await withDelegatedUpdateCommandExecutor(grant,grant.runId,grant.root,async(fence)=>{
                  fence.assertCurrent(); process.stdout.write(JSON.stringify(captureUpdateCommandExecutorAuthority(fence)));
@@ -481,7 +481,7 @@ describe("live update executor", () => {
 });
 
 describe("candidate executor delegation", () => {
-  const moduleUrl = resolveRuntimeWorkerUrl(updateExecutorEntrypoints.owner).href;
+  const moduleUrl = resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.executor).href;
   const program = `
     import fs from "node:fs";
     import {spawn} from "node:child_process";

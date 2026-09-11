@@ -269,7 +269,11 @@ describe("post-activation repair after rollback refusal or failure", () => {
         env: params.ownedManagedUpdateEnv!,
         command: {
           programArguments: [process.execPath, "/candidate/dist/entry.js", "gateway"],
-          environment: params.ownedManagedUpdateEnv!,
+          environment: Object.fromEntries(
+            Object.entries(params.ownedManagedUpdateEnv!).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
         },
       });
       mocks.revalidate.mockImplementation(async () => {

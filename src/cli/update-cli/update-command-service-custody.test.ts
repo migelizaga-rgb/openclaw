@@ -19,6 +19,7 @@ import * as execCommands from "../../process/exec.js";
 import { runUtf8CommandWithTimeout } from "../../process/exec.js";
 import { isPidAlive } from "../../shared/pid-alive.js";
 import { updateExecutorEntrypoints } from "../cli-entrypoint.test-support.js";
+import { updateExecutorNativeEntrypoints } from "./update-command-executor-native-runtime.test-support.js";
 import {
   withUpdateCommandExecutorChild,
   withUpdateCommandExecutor,
@@ -55,8 +56,8 @@ it.each([
       entrypoint,
       `
     process.chdir(${JSON.stringify(receiverRoot)});
-    const {runGatewayServiceUpdateCommand}=await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.native).href)});
-    const {execFileUtf8}=await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.execFile).href)});
+    const {runGatewayServiceUpdateCommand}=await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExecutor).href)});
+    const {execFileUtf8}=await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExec).href)});
     const fs=await import("node:fs");
     const mode=process.argv[process.argv.indexOf("--update-executor")+1];
     if(mode==="check") {
@@ -154,8 +155,8 @@ it.each(["receiver-root", "original-lineage", "stripped-lineage"] as const)(
     vi.spyOn(tempRoot, "resolvePreferredOpenClawTmpDir").mockReturnValue(control);
     const effect = path.join(root, "effect");
     const receiver = `
-    import {runGatewayServiceUpdateCommand} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.native).href)};
-    import {execFileUtf8} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.execFile).href)};
+    import {runGatewayServiceUpdateCommand} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExecutor).href)};
+    import {execFileUtf8} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExec).href)};
     try {
       await runGatewayServiceUpdateCommand("run", "restart", async () => {
         const result = await execFileUtf8(process.execPath, ["-e", ${JSON.stringify(`require("node:fs").writeFileSync(${JSON.stringify(effect)},"wrong-root")`)}]);
@@ -212,8 +213,8 @@ it.each([false, true])(
     const effect = path.join(root, "effect");
     const copy = path.join(control, "copied.sqlite");
     const receiver = `
-    import {runGatewayServiceUpdateCommand} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.native).href)};
-    import {execFileUtf8} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.execFile).href)};
+    import {runGatewayServiceUpdateCommand} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExecutor).href)};
+    import {execFileUtf8} from ${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExec).href)};
     try {
       await runGatewayServiceUpdateCommand("run", "restart", async () => {
         const result = await execFileUtf8(process.execPath, ["-e", ${JSON.stringify(`require("node:fs").writeFileSync(${JSON.stringify(effect)},"copied-database")`)}]);
@@ -318,7 +319,7 @@ it.skipIf(process.platform === "win32").each(["cooperative", "forced"] as const)
     await fs.writeFile(
       entrypoint,
       `
-        const { runGatewayServiceUpdateCommand } = await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.native).href)});
+        const { runGatewayServiceUpdateCommand } = await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExecutor).href)});
       const { spawn } = await import("node:child_process");
       const fs = await import("node:fs");
       const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {
@@ -393,7 +394,7 @@ it.each([
       entrypoint,
       `
     const fs=await import("node:fs");
-    const {runGatewayServiceUpdateCommand}=await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorEntrypoints.native).href)});
+    const {runGatewayServiceUpdateCommand}=await import(${JSON.stringify(resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.nativeExecutor).href)});
     const mode=process.argv[process.argv.indexOf("--update-executor")+1];
     if(mode==="check")process.stdout.write(${JSON.stringify(JSON.stringify({ updateExecutor: "root-spawner-v1", targetRootBinding: true, retainedOwnerBinding: advertised }))});
     else {

@@ -15,6 +15,7 @@ import * as tempRoot from "../../infra/tmp-openclaw-dir.js";
 import { createManagedHandoffLeaseStore } from "../../infra/update-managed-service-handoff-lease.js";
 import { runUtf8CommandWithTimeout } from "../../process/exec.js";
 import { updateExecutorEntrypoints } from "../cli-entrypoint.test-support.js";
+import { updateExecutorNativeEntrypoints } from "./update-command-executor-native-runtime.test-support.js";
 import {
   captureUpdateCommandExecutorAuthority,
   requiresRetainedUpdateCommandOwner,
@@ -39,8 +40,8 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-const ownerModule = resolveRuntimeWorkerUrl(updateExecutorEntrypoints.owner).href;
-const commandModule = resolveRuntimeWorkerUrl(updateExecutorEntrypoints.command).href;
+const ownerModule = resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.executor).href;
+const commandModule = resolveRuntimeWorkerUrl(updateExecutorNativeEntrypoints.processExec).href;
 const activationModule = resolveRuntimeWorkerUrl(updateExecutorEntrypoints.activation).href;
 const program = `
   import fs from "node:fs";
