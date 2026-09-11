@@ -62,6 +62,7 @@ import {
 } from "./model-fallback-attempt.js";
 import { resolveModelCandidateChain } from "./model-fallback-candidates.js";
 import {
+  hasUsableEnvironmentAuth,
   markProbeAttempt,
   resolveCooldownDecision,
   resolveProbeThrottleKey,
@@ -386,11 +387,14 @@ async function runWithModelFallbackInternal<T>(
       !candidateHarnessAuth.skipsProviderAuthCooldown
     ) {
       const profileIds = candidateAuthProfileIds;
-      const isAnyProfileAvailable = profileIds.some(
+      let isAnyAuthAvailable = profileIds.some(
         (id) => !authRuntime.isProfileInCooldown(authStore, id, undefined, candidate.model),
       );
+      if (profileIds.length > 0 && !isAnyAuthAvailable) {
+        isAnyAuthAvailable = await hasUsableEnvironmentAuth(params, candidate, authStore);
+      }
 
-      if (profileIds.length > 0 && !isAnyProfileAvailable) {
+      if (profileIds.length > 0 && !isAnyAuthAvailable) {
         // All profiles for this provider are in cooldown.
         const now = Date.now();
         const probeThrottleKey = resolveProbeThrottleKey(candidate.provider, params.agentDir);

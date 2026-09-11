@@ -61,13 +61,13 @@ import {
   readTranscriptFingerprint,
   readSqliteEntryCount,
   resolveLegacyTranscriptPaths,
-  resolveTargetSqlitePath,
   scanReadOnlySqliteActiveTranscriptFiles,
   type ReadOnlySqliteValidationSnapshot,
 } from "./doctor-session-sqlite-readers.js";
 import { recoverDoctorSessionSqliteTargets } from "./doctor-session-sqlite-recover-report.js";
 import { restoreDoctorSessionSqliteTargets } from "./doctor-session-sqlite-restore-report.js";
 import { reconcileSessionSqliteMigrationPublications } from "./doctor-session-sqlite-restore.js";
+import { resolveTargetSqlitePath } from "./doctor-session-sqlite-targets.js";
 import {
   createDoctorSessionSqliteTotals,
   createDoctorSessionSqliteTargetReport,

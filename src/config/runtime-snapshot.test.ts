@@ -10,6 +10,7 @@ import {
   getAuthoredConfigSecretRef,
   getConfigResolutionFacts,
   resolveConfigSecretRef,
+  resolveConfigProviderUseBindings,
   setConfigResolutionFacts,
   setConfigProviderUseBindings,
   serializeConfigResolutionFacts,
@@ -105,8 +106,9 @@ describe("runtime snapshot state", () => {
         apiKey: { source: "env" as const, provider: "default", id: "BYTEPLUS_API_KEY" },
       },
     };
-    const runtime: OpenClawConfig = { ...source, models: { providers: bindings } };
-    setConfigProviderUseBindings(runtime, bindings);
+    const runtimeInput: OpenClawConfig = { ...source };
+    setConfigProviderUseBindings(runtimeInput, bindings);
+    const runtime = resolveConfigProviderUseBindings(runtimeInput);
     const snapshot = createConfigFileSnapshot({
       path: "/fixture/openclaw.json",
       exists: true,

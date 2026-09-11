@@ -42,7 +42,7 @@ import {
 import { withExistingOpenClawStateDatabaseReadOnly } from "../../../state/openclaw-state-db-readonly.js";
 import { runOpenClawStateWriteTransaction } from "../../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../../state/openclaw-state-db.paths.js";
-import { listExistingAgentDatabaseTargets } from "../../doctor-session-sqlite-readers.js";
+import { listExistingAgentDatabaseTargets } from "../../doctor-session-sqlite-targets.js";
 import {
   collectConfiguredProviderUseSelections,
   type ConfiguredProviderUseSelection,
@@ -260,10 +260,11 @@ export function prepareProviderUseBindingMigration(params: {
   const bindings: ProviderUseBindingMigrationBindings = {};
   const changes: string[] = [];
   const warnings: string[] = [];
-  for (const [identity, candidates] of Object.entries({
+  const providerCandidates: Readonly<Record<string, readonly string[]>> = {
     ...Object.fromEntries([...CHAIN_PROVIDERS].map((provider) => [provider, []])),
     ...envCandidateMap,
-  })) {
+  };
+  for (const [identity, candidates] of Object.entries(providerCandidates)) {
     const provider = normalizeProviderId(identity);
     const chain = CHAIN_PROVIDERS.has(provider);
     const selectedAgents = [...selectedProviders]
@@ -385,9 +386,21 @@ export function prepareProviderUseBindingMigration(params: {
 /** Carry only approved migration work into Doctor's delayed config writer. */
 export function resolveProviderUseBindingWriteMetadata(
   migration: Awaited<ReturnType<typeof prepareProviderUseBindingMigration>>,
-  options: { shouldWriteConfig: boolean; shouldRepair: boolean; blocksWrite?: boolean },
+  options: {
+    shouldWriteConfig: boolean;
+    shouldRepair: boolean;
+    blocksWrite?: boolean;
+    explicitSetPaths?: readonly (readonly string[])[];
+  },
 ) {
+  // Startup may already project these values. Doctor must persist the selected entries
+  // even when they are identical to the runtime snapshot, including an empty declaration.
+  const explicitSetPaths = [
+    ...(options.explicitSetPaths ?? []),
+    ...Object.keys(migration.bindings ?? {}).map((provider) => ["models", "providers", provider]),
+  ];
   return {
+    ...(options.shouldWriteConfig && explicitSetPaths.length > 0 ? { explicitSetPaths } : {}),
     ...(options.shouldWriteConfig && migration.bindings
       ? { providerUseBindings: migration.bindings }
       : {}),

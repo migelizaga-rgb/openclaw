@@ -19,6 +19,9 @@ function unsetPathForWriteAt(
   }
   const segment = expectDefined(pathSegments[depth], "path segments entry at depth");
   const isLeaf = depth === pathSegments.length - 1;
+  // A provider object is an explicit declaration even after its last field is removed.
+  const preserveEmptyDeclaration =
+    depth === 3 && pathSegments[0] === "models" && pathSegments[1] === "providers";
 
   if (Array.isArray(value)) {
     const index = parseConfigPathArrayIndex(segment);
@@ -51,7 +54,8 @@ function unsetPathForWriteAt(
     delete next[segment];
     return {
       changed: true,
-      value: Object.keys(next).length === 0 ? WRITE_PRUNED_OBJECT : next,
+      value:
+        Object.keys(next).length === 0 && !preserveEmptyDeclaration ? WRITE_PRUNED_OBJECT : next,
     };
   }
 
@@ -67,7 +71,7 @@ function unsetPathForWriteAt(
   }
   return {
     changed: true,
-    value: Object.keys(next).length === 0 ? WRITE_PRUNED_OBJECT : next,
+    value: Object.keys(next).length === 0 && !preserveEmptyDeclaration ? WRITE_PRUNED_OBJECT : next,
   };
 }
 

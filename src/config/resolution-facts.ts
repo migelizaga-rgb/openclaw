@@ -94,7 +94,19 @@ export function resolveConfigProviderUseBindings(config: OpenClawConfig): OpenCl
   }
   const resolved = {
     ...config,
-    models: { ...config.models, providers: { ...bindings, ...config.models?.providers } },
+    models: {
+      ...config.models,
+      providers: {
+        // Runtime provider overlays use sentinels; the recorded source bindings stay sparse.
+        ...Object.fromEntries(
+          Object.entries(bindings).map(([provider, binding]) => [
+            provider,
+            { baseUrl: "", models: [], ...binding },
+          ]),
+        ),
+        ...config.models?.providers,
+      },
+    },
   };
   copyConfigResolutionFacts(config, resolved);
   return resolved;

@@ -1,5 +1,7 @@
 /** Decides when cooldowned model candidates may be skipped, probed, or suspended. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { isActiveUnusableWindow } from "./auth-profiles/usage-state.js";
 import { shouldUseTransientCooldownProbeSlot } from "./failover-policy.js";
@@ -13,6 +15,38 @@ const PROBE_MARGIN_MS = 2 * 60 * 1000;
 const PROBE_SCOPE_DELIMITER = "::";
 const PROBE_STATE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PROBE_KEYS = 256;
+const modelAuthAvailabilityLoader = createLazyImportLoader(
+  () => import("./model-auth-availability.js"),
+);
+
+/** A saved-account cooldown cannot block an independently admitted usable env account. */
+export async function hasUsableEnvironmentAuth(
+  scope: {
+    cfg?: OpenClawConfig;
+    agentId?: string;
+    agentDir?: string;
+    userLockedAuthProfileId?: string;
+  },
+  candidate: ModelCandidate,
+  authStore: AuthProfileStore,
+): Promise<boolean> {
+  if (!scope.cfg || normalizeOptionalString(scope.userLockedAuthProfileId)) {
+    return false;
+  }
+  const { createModelAuthAvailabilityResolver } = await modelAuthAvailabilityLoader.load();
+  const availability = createModelAuthAvailabilityResolver({
+    cfg: scope.cfg,
+    authStore,
+    agentId: scope.agentId,
+    agentDir: scope.agentDir,
+  }).evaluateModelAuth(candidate.provider, { modelId: candidate.model });
+  return (
+    availability.availability === true &&
+    (availability.evidence === "environment" ||
+      ((availability.evidence === "provider-config" || availability.evidence === "runtime") &&
+        availability.environmentVariable !== undefined))
+  );
+}
 
 export function resolveProbeThrottleKey(provider: string, agentDir?: string): string {
   const scope = normalizeOptionalString(agentDir) ?? "";

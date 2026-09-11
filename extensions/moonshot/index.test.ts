@@ -89,14 +89,16 @@ describe("moonshot provider plugin", () => {
     },
   );
 
-  it("mirrors Kimi web-search env credentials in manifest metadata", () => {
+  it("keeps Moonshot chat credentials distinct from Kimi web-search credentials", () => {
     const manifestEnvVars =
       readManifest().setup?.providers?.find((provider) => provider.id === "moonshot")?.envVars ??
       [];
 
-    expect([...manifestEnvVars].toSorted()).toStrictEqual(
-      [...createKimiWebSearchProvider().envVars].toSorted(),
-    );
+    expect(manifestEnvVars).toStrictEqual(["MOONSHOT_API_KEY"]);
+    expect([...createKimiWebSearchProvider().envVars].toSorted()).toStrictEqual([
+      "KIMI_API_KEY",
+      "MOONSHOT_API_KEY",
+    ]);
   });
 
   it("declares shipped Moonshot provider aliases in runtime and manifest metadata", async () => {

@@ -336,7 +336,7 @@ describe("buildAuthHealthSummary", () => {
     expect(summary.providers.find((entry) => entry.provider === "zai")?.status).toBe("missing");
   });
 
-  it("uses runtime provider credentials for profile health", () => {
+  it("preserves the stored account type and expiry for a CLI provider", () => {
     vi.spyOn(Date, "now").mockReturnValue(now);
     const store = {
       version: 1,
@@ -354,22 +354,15 @@ describe("buildAuthHealthSummary", () => {
     const summary = buildAuthHealthSummary({
       store,
       warnAfterMs: DEFAULT_OAUTH_WARN_MS,
-      runtimeCredentialsByProvider: new Map([
-        [
-          "claude-cli",
-          {
-            type: "token",
-            provider: "claude-cli",
-            token: "fresh-cli-access",
-            expires: now + DEFAULT_OAUTH_WARN_MS + 60_000,
-          },
-        ],
-      ]),
     });
 
     const profile = summary.profiles.find((entry) => entry.profileId === "anthropic:claude-cli");
-    expect(profile?.status).toBe("ok");
-    expect(profile?.expiresAt).toBe(now + DEFAULT_OAUTH_WARN_MS + 60_000);
+    expect(profile).toMatchObject({
+      type: "oauth",
+      status: "expired",
+      expiresAt: now - 10_000,
+      remainingMs: -10_000,
+    });
   });
 
   it("does not let fresh .codex state override expired canonical health", () => {

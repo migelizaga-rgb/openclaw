@@ -30,11 +30,11 @@ import {
   resolveSessionSqliteMigrationRunsDir,
   type SessionSqliteMigrationTargetInput,
 } from "./doctor-session-sqlite-migration-run.js";
+import { restoreSessionSqliteMigrationRun } from "./doctor-session-sqlite-restore.js";
 import {
   resolveTargetSqliteOptions,
   resolveTargetSqlitePath,
-} from "./doctor-session-sqlite-readers.js";
-import { restoreSessionSqliteMigrationRun } from "./doctor-session-sqlite-restore.js";
+} from "./doctor-session-sqlite-targets.js";
 import {
   createDoctorSessionSqliteTotals,
   createDoctorSessionSqliteTargetReport,

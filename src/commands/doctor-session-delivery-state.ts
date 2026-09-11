@@ -11,7 +11,7 @@ import {
   isOpenClawAgentDatabaseOpen,
 } from "../state/openclaw-agent-db.js";
 import { runDoctorAgentDatabaseOperation } from "./doctor-agent-database-operation.js";
-import { listExistingAgentDatabaseTargets } from "./doctor-session-sqlite-readers.js";
+import { listExistingAgentDatabaseTargets } from "./doctor-session-sqlite-targets.js";
 
 export type SessionDeliveryStateRepairReport = {
   found: number;

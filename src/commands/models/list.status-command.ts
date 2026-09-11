@@ -56,7 +56,6 @@ import { createModelVisibilityPolicy } from "../../agents/model-visibility-polic
 import { resolveModelCatalogIdentityKey } from "../../agents/openai-model-routes.js";
 import { OPENAI_PROVIDER_ID } from "../../agents/openai-routing.js";
 import { loadPreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
-import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import {
   readUtilityModelSetting,
   resolveUtilityModelRefForAgent,
@@ -508,6 +507,11 @@ export async function modelsStatusCommand(
       };
       const { aliasMap, envCandidateMap, authEvidenceMap } =
         resolveProviderEnvAuthLookupMaps(envLookupParams);
+      const modelProviderIds = new Set(
+        metadataSnapshot.plugins
+          .flatMap((plugin) => plugin.providers ?? [])
+          .map(normalizeProviderId),
+      );
       for (const provider of listProviderEnvAuthLookupKeys({ envCandidateMap, authEvidenceMap })) {
         if (
           resolveEnvApiKey(provider, process.env, {
@@ -519,7 +523,11 @@ export async function modelsStatusCommand(
             skipSetupProviderFallback: true,
           })
         ) {
-          providersFromEnv.add(provider);
+          const normalized = normalizeProviderId(provider);
+          // Auth-only aliases are lookup spellings; declared providers keep distinct status rows.
+          providersFromEnv.add(
+            modelProviderIds.has(normalized) ? normalized : (aliasMap[normalized] ?? normalized),
+          );
         }
       }
       const syntheticAuthProviderRefs = new Set(
@@ -631,10 +639,7 @@ export async function modelsStatusCommand(
                 ? usage.allowCodexRuntimeFallback
                   ? resolver.evaluateRuntimeModelAuth(usage.provider, ref)
                   : resolver.evaluateModelAuth(usage.provider, ref)
-                : {
-                    availability: resolver.resolveProviderAuthAvailability(usage.provider, ref),
-                    routeResolution: null,
-                  };
+                : resolver.evaluateProviderAuth(usage.provider, ref);
             const providerRouteIncompatible =
               rawEvaluation.routeResolution?.kind === "incompatible";
             const requestedCodexRuntimeAuth =
@@ -791,6 +796,33 @@ export async function modelsStatusCommand(
       const applied = getShellEnvAppliedKeys();
       const shellFallbackEnabled =
         shouldEnableShellEnvFallback(process.env) || cfg.env?.shellEnv?.enabled === true;
+      const resolveAuthOverview = (
+        provider: string,
+        evaluation: ModelAuthAvailabilityEvaluation,
+      ) => {
+        const syntheticProvider = evaluation.runtimeAuth?.id ?? provider;
+        const syntheticAuth = syntheticAuthByProvider.get(syntheticProvider);
+        return resolveProviderAuthOverview({
+          provider,
+          cfg,
+          store,
+          modelsPath,
+          agentDir,
+          workspaceDir,
+          syntheticAuth: syntheticAuth
+            ? {
+                ...syntheticAuth,
+                ...(runtimeCredentialsByProvider.has(syntheticProvider)
+                  ? { profileId: `${syntheticProvider}:runtime-synthetic` }
+                  : {}),
+              }
+            : undefined,
+          aliasMap,
+          envCandidateMap,
+          authEvidenceMap,
+          evaluation,
+        });
+      };
       const providerAuth = Array.from(
         new Set([
           ...providers,
@@ -800,26 +832,16 @@ export async function modelsStatusCommand(
         ]),
       )
         .toSorted((a, b) => a.localeCompare(b))
-        .map((provider) =>
-          resolveProviderAuthOverview({
-            provider,
-            cfg,
-            store,
-            modelsPath,
-            agentDir,
-            workspaceDir,
-            syntheticAuth: syntheticAuthByProvider.get(provider),
-            aliasMap,
-            envCandidateMap,
-            authEvidenceMap,
-            selectedEnvironmentVariable: providerUses.find(
-              (usage) =>
-                normalizeProviderId(usage.provider) === normalizeProviderId(provider) &&
-                usage.evaluation.availability === true &&
-                usage.evaluation.environmentVariable !== undefined,
-            )?.evaluation.environmentVariable,
-          }),
-        )
+        .map((provider) => {
+          const uses = providerUses.filter(
+            (usage) => normalizeProviderId(usage.provider) === normalizeProviderId(provider),
+          );
+          const evaluation =
+            uses.find((usage) => usage.evaluation.availability === true)?.evaluation ??
+            uses[0]?.evaluation ??
+            authResolver.evaluateModelAuth(provider);
+          return resolveAuthOverview(provider, evaluation);
+        })
         .filter((entry) => {
           const hasAny =
             entry.profiles.count > 0 ||
@@ -828,11 +850,6 @@ export async function modelsStatusCommand(
             Boolean(entry.syntheticAuth);
           return hasAny;
         });
-      const providerAuthMap = new Map(providerAuth.map((entry) => [entry.provider, entry]));
-      const missingProviderAuthEffective: ProviderAuthOverview["effective"] = {
-        kind: "missing",
-        detail: "missing",
-      };
       const runtimeAuthStore = getRuntimeAuthProfileStoreSnapshot(agentDir);
       const healthStore = runtimeAuthStore
         ? {
@@ -844,65 +861,11 @@ export async function modelsStatusCommand(
         store: healthStore,
         cfg,
         warnAfterMs: DEFAULT_OAUTH_WARN_MS,
-        runtimeCredentialsByProvider,
         allowKeychainPrompt: false,
       });
       const authProfileHealthById = new Map(
         authHealth.profiles.map((profile) => [profile.profileId, profile]),
       );
-      const resolveProviderAuthHealthId = (provider: string): string =>
-        resolveProviderIdForAuth(provider, envLookupParams);
-      const resolveRuntimeAuthRouteEffective = (
-        provider: string,
-        evaluation?: ModelAuthAvailabilityEvaluation,
-      ): ProviderAuthOverview["effective"] => {
-        if (!evaluation) {
-          return providerAuthMap.get(provider)?.effective ?? missingProviderAuthEffective;
-        }
-        if (evaluation?.availability === false) {
-          return missingProviderAuthEffective;
-        }
-        if (evaluation.runtimeAuth?.source === "native") {
-          return {
-            kind: "synthetic",
-            detail:
-              syntheticAuthByProvider.get(evaluation.runtimeAuth.id)?.source ?? "native login",
-          };
-        }
-        const candidates = Array.from(
-          new Set([normalizeProviderId(provider), resolveProviderAuthHealthId(provider)]),
-        );
-        const profileId = evaluation.selectedProfileId;
-        if (profileId) {
-          const credentialProvider = store.profiles[profileId]?.provider ?? provider;
-          const source = providerAuthMap.get(
-            resolveProviderAuthHealthId(credentialProvider),
-          )?.effective;
-          return source && source.kind !== "missing"
-            ? source
-            : { kind: "profiles", detail: profileId };
-        }
-        for (const candidate of candidates) {
-          const auth = providerAuthMap.get(candidate);
-          if (evaluation.evidence === "environment" && auth?.env) {
-            return { kind: "env", detail: auth.env.value };
-          }
-          if (
-            (evaluation.evidence === "provider-config" || evaluation.evidence === "runtime") &&
-            auth?.modelsJson
-          ) {
-            return { kind: "models.json", detail: auth.modelsJson.value };
-          }
-          if (evaluation.evidence === "synthetic" && syntheticAuthByProvider.has(candidate)) {
-            return {
-              kind: "synthetic",
-              detail: syntheticAuthByProvider.get(candidate)?.source ?? "plugin-owned",
-            };
-          }
-        }
-        const direct = providerAuthMap.get(provider)?.effective;
-        return direct ?? missingProviderAuthEffective;
-      };
       const resolveCliRuntimeAuthProvider = (usage: (typeof providerUses)[number]) =>
         cliRuntimeAuthUsages.find(
           (candidate) =>
@@ -932,10 +895,10 @@ export async function modelsStatusCommand(
         ...Array.from(codexRuntimeUsagesByProvider.entries()).map(([provider, usages]) => {
           const representative =
             usages.find((usage) => usage.evaluation.availability === true) ?? usages[0];
-          const effective = resolveRuntimeAuthRouteEffective(
+          const effective = resolveAuthOverview(
             codexProvider,
-            representative?.evaluation,
-          );
+            representative?.evaluation ?? authResolver.evaluateModelAuth(codexProvider),
+          ).effective;
           const availabilities = usages.map((usage) => usage.evaluation.availability);
           const authStatus = availabilities.every((availability) => availability === true)
             ? "usable"
@@ -968,7 +931,7 @@ export async function modelsStatusCommand(
         }),
         ...cliRuntimeAuthUsages.map((usage) => {
           const evaluation = authResolver.evaluateModelAuth(usage.runtime);
-          const effective = resolveRuntimeAuthRouteEffective(usage.runtime, evaluation);
+          const effective = resolveAuthOverview(usage.runtime, evaluation).effective;
           return [
             `${usage.provider}:${usage.runtime}:${usage.runtime}`,
             {

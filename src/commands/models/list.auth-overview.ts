@@ -11,6 +11,7 @@ import { loadPersistedAuthProfileStore } from "../../agents/auth-profiles/persis
 import { listProfilesForProvider } from "../../agents/auth-profiles/profiles.js";
 import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { resolveProfileUnusableUntilForDisplay } from "../../agents/auth-profiles/usage.js";
+import type { ModelAuthAvailabilityEvaluation } from "../../agents/model-auth-availability.js";
 import { isNonSecretApiKeyMarker, isOAuthApiKeyMarker } from "../../agents/model-auth-markers.js";
 import { resolveProviderConfigSecretInput } from "../../agents/model-auth-provider-config.js";
 import { resolveManagedSecretRefRuntimeProviderAuth } from "../../agents/model-auth-runtime-config.js";
@@ -84,12 +85,12 @@ export function resolveProviderAuthOverview(params: {
   modelsPath: string;
   agentDir?: string;
   workspaceDir?: string;
-  syntheticAuth?: { value: string; source: string };
+  syntheticAuth?: { value: string; source: string; profileId?: string };
   aliasMap?: Readonly<Record<string, string>>;
   envCandidateMap?: Readonly<Record<string, readonly string[]>>;
   authEvidenceMap?: Readonly<Record<string, readonly ProviderAuthEvidence[]>>;
-  /** The readiness owner selected this admitted environment variable for a working route. */
-  selectedEnvironmentVariable?: string;
+  /** The routing owner's selected credential; inventory presence cannot override this result. */
+  evaluation: ModelAuthAvailabilityEvaluation;
 }): ProviderAuthOverview {
   const { provider, cfg, store } = params;
   const now = Date.now();
@@ -161,10 +162,10 @@ export function resolveProviderAuthOverview(params: {
     candidateMap: params.envCandidateMap,
     authEvidenceMap: params.authEvidenceMap,
     skipSetupProviderFallback: hasPrecomputedCandidates || hasPrecomputedEvidence,
-    ...(params.selectedEnvironmentVariable
+    ...(params.evaluation.environmentVariable
       ? {
           aliasMap: {},
-          candidateMap: { [normalizedProvider]: [params.selectedEnvironmentVariable] },
+          candidateMap: { [normalizedProvider]: [params.evaluation.environmentVariable] },
           authEvidenceMap: {},
           skipSetupProviderFallback: true,
         }
@@ -173,55 +174,70 @@ export function resolveProviderAuthOverview(params: {
   const customKey = getCustomProviderApiKey(cfg, provider);
   const usableCustomKey = resolveUsableCustomProviderApiKey({ cfg, provider });
   const providerApiKeyRef = resolveProviderConfigSecretInput(cfg, provider).ref;
+  const envValue = envKey
+    ? envKey.source.includes("OAUTH_TOKEN") ||
+      normalizeLowercaseStringOrEmpty(envKey.source).includes("oauth")
+      ? "OAuth (env)"
+      : maskApiKey(envKey.apiKey)
+    : undefined;
+  const profileSource = (profileIds: string[]): ProviderAuthOverview["effective"] => ({
+    kind: "profiles",
+    detail: shortenHomePath(
+      resolveAuthStorePathForDisplay(
+        resolveProfileSourceAgentDir({ agentDir: params.agentDir, profileIds }),
+      ),
+    ),
+  });
+  const configuredSource = (): ProviderAuthOverview["effective"] => {
+    if (
+      providerApiKeyRef &&
+      providerApiKeyRef.source !== "env" &&
+      resolveManagedSecretRefRuntimeProviderAuth({ cfg, provider })
+    ) {
+      return { kind: "models.json", detail: formatMarkerOrSecret(NON_ENV_SECRETREF_MARKER) };
+    }
+    if (!usableCustomKey) {
+      if (customKey && isOAuthApiKeyMarker(customKey)) {
+        return { kind: "models.json", detail: formatMarkerOrSecret(customKey) };
+      }
+      return { kind: "missing", detail: "missing" };
+    }
+    return providerApiKeyRef?.source === "env"
+      ? { kind: "env", detail: maskApiKey(usableCustomKey.apiKey) }
+      : { kind: "models.json", detail: formatMarkerOrSecret(usableCustomKey.apiKey) };
+  };
 
   const effective: ProviderAuthOverview["effective"] = (() => {
-    if (params.selectedEnvironmentVariable && envKey) {
-      return { kind: "env", detail: maskApiKey(envKey.apiKey) };
+    const evaluation = params.evaluation;
+    if (evaluation.availability === false) {
+      return { kind: "missing", detail: "missing" };
     }
-    if (providerApiKeyRef) {
-      if (
-        providerApiKeyRef.source !== "env" &&
-        resolveManagedSecretRefRuntimeProviderAuth({ cfg, provider })
-      ) {
-        return { kind: "models.json", detail: formatMarkerOrSecret(NON_ENV_SECRETREF_MARKER) };
-      }
-      if (!usableCustomKey) {
-        return { kind: "missing", detail: "missing" };
-      }
-      return providerApiKeyRef.source === "env"
-        ? { kind: "env", detail: maskApiKey(usableCustomKey.apiKey) }
-        : { kind: "models.json", detail: formatMarkerOrSecret(usableCustomKey.apiKey) };
+    if (evaluation.runtimeAuth?.source === "native") {
+      return { kind: "synthetic", detail: params.syntheticAuth?.source ?? "native login" };
     }
-    if (profiles.length > 0) {
-      return {
-        kind: "profiles",
-        detail: shortenHomePath(
-          resolveAuthStorePathForDisplay(
-            resolveProfileSourceAgentDir({
-              agentDir: params.agentDir,
-              profileIds: profiles,
-            }),
-          ),
-        ),
-      };
+    if (evaluation.selectedProfileId) {
+      return store.profiles[evaluation.selectedProfileId]
+        ? profileSource([evaluation.selectedProfileId])
+        : params.syntheticAuth?.profileId === evaluation.selectedProfileId
+          ? { kind: "synthetic", detail: params.syntheticAuth.source }
+          : { kind: "profiles", detail: evaluation.selectedProfileId };
     }
-    if (envKey) {
-      const normalizedSource = normalizeLowercaseStringOrEmpty(envKey.source);
-      const isOAuthEnv =
-        envKey.source.includes("OAUTH_TOKEN") || normalizedSource.includes("oauth");
-      return {
-        kind: "env",
-        detail: isOAuthEnv ? "OAuth (env)" : maskApiKey(envKey.apiKey),
-      };
+    if (evaluation.evidence === "environment" && envValue) {
+      return { kind: "env", detail: envValue };
     }
-    if (usableCustomKey) {
-      return { kind: "models.json", detail: formatMarkerOrSecret(usableCustomKey.apiKey) };
+    if (evaluation.evidence === "provider-config") {
+      return configuredSource();
     }
-    if (params.syntheticAuth) {
-      return { kind: "synthetic", detail: params.syntheticAuth.source };
+    if (evaluation.evidence === "synthetic") {
+      return { kind: "synthetic", detail: params.syntheticAuth?.source ?? "provider-managed" };
     }
-    if (customKey && isOAuthApiKeyMarker(customKey)) {
-      return { kind: "models.json", detail: formatMarkerOrSecret(customKey) };
+    if (evaluation.evidence === "runtime") {
+      return usableCustomKey
+        ? configuredSource()
+        : { kind: "runtime", detail: evaluation.selectedAuthMode ?? "runtime auth" };
+    }
+    if (evaluation.evidence === "aws-sdk") {
+      return { kind: "runtime", detail: "aws-sdk" };
     }
     return { kind: "missing", detail: "missing" };
   })();
@@ -236,15 +252,10 @@ export function resolveProviderAuthOverview(params: {
       apiKey: apiKeyCount,
       labels,
     },
-    ...(envKey
+    ...(envKey && envValue
       ? {
           env: {
-            value: (() => {
-              const normalizedSource = normalizeLowercaseStringOrEmpty(envKey.source);
-              return envKey.source.includes("OAUTH_TOKEN") || normalizedSource.includes("oauth")
-                ? "OAuth (env)"
-                : maskApiKey(envKey.apiKey);
-            })(),
+            value: envValue,
             source: envKey.source,
           },
         }

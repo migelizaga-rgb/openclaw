@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
+import { resolveProviderUseAdmission } from "../agents/provider-model-auth-source-plan.js";
 import { createDoctorPrompter } from "../commands/doctor-prompter.js";
 import {
   prepareProviderUseBindingMigration,
@@ -27,6 +28,53 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
+
+it.each(["amazon-bedrock", "amazon-bedrock-mantle", "google-vertex"])(
+  "persists the empty %s declaration before completion and preserves it through later repairs",
+  async (provider) => {
+    state = await createOpenClawTestState({
+      label: "doctor-chain-binding-write",
+      env: {
+        OPENCLAW_BUNDLED_PLUGINS_DIR: fileURLToPath(new URL("../../extensions/", import.meta.url)),
+        OPENCLAW_DISABLE_BUNDLED_PLUGINS: "0",
+        OPENCLAW_UPDATE_IN_PROGRESS: undefined,
+      },
+    });
+    const { prepareDoctorContext } = await import("../commands/doctor-config-flow.test-support.js");
+    await state.writeConfig({
+      agents: { defaults: { model: `${provider}/fixture` }, entries: { main: {} } },
+      gateway: { mode: "local" },
+    });
+    const context = await prepareDoctorContext(state.configPath);
+    expect(context.cfg.models?.providers?.[provider]).toEqual({ baseUrl: "", models: [] });
+
+    await runWriteConfigHealth(context, { runPostWriteRepairs: false });
+
+    const persisted: OpenClawConfig = JSON.parse(await fs.readFile(state.configPath, "utf8"));
+    expect(persisted.models?.providers).toEqual({ [provider]: {} });
+    expect(resolveProviderUseAdmission({ config: persisted, env: {} }).get(provider)).toEqual({
+      kind: "provider-config",
+    });
+    expect(
+      prepareProviderUseBindingMigration({
+        config: persisted,
+        configPath: state.configPath,
+        env: state.env,
+      }).pending,
+    ).toBe(false);
+
+    context.cfg.gateway = { ...context.cfg.gateway, port: 19491 };
+    await runWriteConfigHealth(context, { runPostWriteRepairs: false });
+    const afterRepair: OpenClawConfig = JSON.parse(await fs.readFile(state.configPath, "utf8"));
+    expect(afterRepair.models?.providers).toEqual({ [provider]: {} });
+    expect(afterRepair.gateway?.port).toBe(19491);
+
+    const written = await fs.readFile(state.configPath, "utf8");
+    const repeat = await prepareDoctorContext(state.configPath);
+    await runWriteConfigHealth(repeat, { runPostWriteRepairs: false });
+    expect(await fs.readFile(state.configPath, "utf8")).toBe(written);
+  },
+);
 
 it("warns on a read-only config lock without writing a binding or completion receipt", async () => {
   state = await createOpenClawTestState({

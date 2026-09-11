@@ -197,7 +197,15 @@ async function runDoctorHealthFlowWithResult(
     }
     if (readOnlyConfig) {
       const { createConfigIO } = await import("../config/io.js");
-      ctx.cfg = createConfigIO({ configPath: ctx.configPath, observe: false }).loadConfig();
+      const snapshot = await createConfigIO({
+        configPath: ctx.configPath,
+        observe: false,
+      }).readConfigFileSnapshot();
+      if (!snapshot.valid) {
+        const { createConfigValidationFailedError } = await import("../config/io.write-errors.js");
+        throw createConfigValidationFailedError(snapshot.issues);
+      }
+      ctx.cfg = snapshot.config;
     }
     if (options.repair === true || options.yes === true) {
       // Contributions can report optional migration warnings, but repair must not

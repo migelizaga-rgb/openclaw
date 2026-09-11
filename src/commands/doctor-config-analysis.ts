@@ -185,7 +185,15 @@ export function noteOpencodeProviderOverrides(
 
   const overrides: string[] = [];
   const hasOverride = (id: string) =>
-    Object.keys(providers[id] ?? {}).some((key) => key !== "apiKey");
+    Object.entries(providers[id] ?? {}).some(([key, value]) =>
+      key === "apiKey"
+        ? false
+        : key === "baseUrl"
+          ? Boolean(value)
+          : key === "models"
+            ? Array.isArray(value) && value.length > 0
+            : true,
+    );
   if (options.opencodePluginActive === true && hasOverride("opencode")) {
     overrides.push("opencode");
   }

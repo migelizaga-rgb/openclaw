@@ -42,9 +42,10 @@ function publishResolvedConfig(source: ReturnType<typeof sourceConfig>) {
   return resolved;
 }
 
-function overview(cfg: OpenClawConfig) {
+function overview(cfg: OpenClawConfig, availability: boolean) {
   return resolveProviderAuthOverview({
     provider: "diagnostic",
+    evaluation: { availability, evidence: "provider-config", routeResolution: null },
     cfg,
     store: { version: 1, profiles: {} },
     modelsPath: "/synthetic/models.json",
@@ -60,7 +61,7 @@ describe("resolved non-env config credentials in the auth overview", () => {
   it("shows the resolved config source without exposing its credential", () => {
     const cfg = publishResolvedConfig(sourceConfig());
 
-    const result = overview(cfg);
+    const result = overview(cfg, true);
 
     expect(result.effective).toEqual({
       kind: "models.json",
@@ -71,7 +72,7 @@ describe("resolved non-env config credentials in the auth overview", () => {
   });
 
   it("keeps a cold configured reference missing without resolved material", () => {
-    const result = overview(sourceConfig());
+    const result = overview(sourceConfig(), false);
 
     expect(result.effective).toEqual({ kind: "missing", detail: "missing" });
     expect(result.modelsJson?.value).toBe(`marker(${NON_ENV_SECRETREF_MARKER})`);
@@ -80,7 +81,7 @@ describe("resolved non-env config credentials in the auth overview", () => {
   it("does not borrow resolved material after the configured reference changes", () => {
     publishResolvedConfig(sourceConfig("old-reference"));
 
-    const result = overview(sourceConfig("new-reference"));
+    const result = overview(sourceConfig("new-reference"), false);
 
     expect(result.effective).toEqual({ kind: "missing", detail: "missing" });
     expect(JSON.stringify(result)).not.toContain(credential);

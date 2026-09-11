@@ -1,4 +1,5 @@
 // Model list status tests cover status column construction and auth/probe summaries.
+import { fileURLToPath } from "node:url";
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it, type Mock, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
@@ -760,7 +761,12 @@ describe("modelsStatusCommand auth overview", () => {
   });
 
   it("includes masked auth sources in JSON output", async () => {
-    await modelsStatusCommand({ json: true }, runtime);
+    const cfg = mocks.loadConfig();
+    await withConfig({ ...cfg, models: { providers: { minimax: {}, fal: {} } } }, () =>
+      withEnvAsync({ MINIMAX_API_KEY: "fixture-minimax-key", FAL_KEY: "fixture-fal-key" }, () =>
+        modelsStatusCommand({ json: true }, runtime),
+      ),
+    );
     const payload = parseFirstJsonLog(runtime);
 
     expect(mocks.loadModelsConfigArgs.mock.calls.at(-1)?.[0]).toMatchObject({
@@ -863,6 +869,35 @@ describe("modelsStatusCommand auth overview", () => {
         expect(parseFirstJsonLog(localRuntime).allowed).toEqual(["clawrouter/anthropic/*"]);
       },
     );
+  });
+
+  it("retains provider credential facts for an image-only model without text route interpretation", async () => {
+    const localRuntime = createTestRuntime();
+    const cfg = mocks.loadConfig();
+    await withConfig(
+      {
+        ...cfg,
+        agents: {
+          defaults: {
+            ...cfg.agents.defaults,
+            utilityModel: "",
+            imageModel: "openai/image-only-fixture",
+          },
+        },
+        auth: { profiles: { "openai:api-key": { provider: "openai", mode: "api_key" } } },
+      },
+      () => modelsStatusCommand({ json: true }, localRuntime),
+    );
+    const payload = parseFirstJsonLog(localRuntime);
+    expect(requireProvider(payload.auth.providers, "openai").effective).toMatchObject({
+      kind: "profiles",
+    });
+    expect(payload.auth.missingProvidersInUse).not.toContain("openai");
+    expect(
+      payload.auth.modelRouteIssues.filter(
+        (issue: { provider: string }) => issue.provider === "openai",
+      ),
+    ).toEqual([]);
   });
 
   it("reports the resolved utility model in JSON output", async () => {
@@ -987,18 +1022,33 @@ describe("modelsStatusCommand auth overview", () => {
     const localRuntime = createTestRuntime();
     await withAgentScopeOverrides(
       {
-        primary: "openai/gpt-4",
-        fallbacks: ["openai/gpt-3.5"],
+        primary: "openai/gpt-5.6",
+        fallbacks: ["openai/gpt-5.5"],
         agentDir: "/tmp/openclaw-agent-custom",
       },
       async () => {
-        await modelsStatusCommand({ json: true, agent: "Jeremiah" }, localRuntime);
+        await withOpenAIStatusFixture(
+          {
+            primary: "openai/gpt-5.6",
+            fallbacks: ["openai/gpt-5.5"],
+            profiles: {
+              "openai:api-key": {
+                type: "api_key",
+                provider: "openai",
+                key: "sk-openai-platform-fixture",
+              },
+            },
+            providerAuth: "api-key",
+            agentRuntime: "openclaw",
+          },
+          () => modelsStatusCommand({ json: true, agent: "Jeremiah" }, localRuntime),
+        );
         expectResolveAgentDirCalledFor("jeremiah");
         const payload = parseFirstJsonLog(localRuntime);
         expect(payload.agentId).toBe("jeremiah");
         expect(payload.agentDir).toBe("/tmp/openclaw-agent-custom");
-        expect(payload.defaultModel).toBe("openai/gpt-4");
-        expect(payload.fallbacks).toEqual(["openai/gpt-3.5"]);
+        expect(payload.defaultModel).toBe("openai/gpt-5.6");
+        expect(payload.fallbacks).toEqual(["openai/gpt-5.5"]);
         expect(payload.modelConfig).toEqual({
           defaultSource: "agent",
           fallbacksSource: "agent",
@@ -1819,6 +1869,87 @@ describe("modelsStatusCommand auth overview", () => {
     }
   });
 
+  it("keeps saved token expiry visible when an independent runtime credential serves the provider", async () => {
+    const { buildAuthHealthSummary } = await import("../../agents/auth-health.js");
+    const actualAuthHealth = await vi.importActual<typeof import("../../agents/auth-health.js")>(
+      "../../agents/auth-health.js",
+    );
+    const originalHealth = vi.mocked(buildAuthHealthSummary).getMockImplementation();
+    const now = Date.now();
+    const localRuntime = createTestRuntime();
+    const originalConfig = mocks.loadConfig.getMockImplementation();
+    const originalProfiles = mocks.store.profiles;
+    const originalEnv = mocks.resolveEnvApiKey.getMockImplementation();
+    const originalRefs = mocks.resolveRuntimeSyntheticAuthProviderRefs.getMockImplementation();
+    const originalSynthetic = mocks.resolveProviderSyntheticAuthWithPlugin.getMockImplementation();
+    const originalLookupMaps = mocks.resolveProviderEnvAuthLookupMaps();
+    const originalLookupKeys = mocks.listProviderEnvAuthLookupKeys.getMockImplementation();
+    mocks.loadConfig.mockReturnValue({
+      agents: { defaults: { model: "xai/grok-fixture" } },
+      auth: { profiles: { "xai:saved": { provider: "xai", mode: "token" } } },
+    });
+    mocks.store.profiles = {
+      "xai:saved": {
+        type: "token",
+        provider: "xai",
+        token: "saved-account",
+        expires: now - 10_000,
+      },
+    };
+    mocks.resolveEnvApiKey.mockReturnValue({
+      apiKey: "independent-runtime-account",
+      source: "env: XAI_API_KEY",
+    });
+    mocks.resolveProviderEnvAuthLookupMaps.mockReturnValue({
+      ...originalLookupMaps,
+      aliasMap: { ...originalLookupMaps.aliasMap, "x-ai": "xai", "byteplus-plan": "byteplus" },
+      envCandidateMap: { ...originalLookupMaps.envCandidateMap, xai: ["XAI_API_KEY"] },
+    });
+    mocks.listProviderEnvAuthLookupKeys.mockReturnValue(["x-ai", "xai", "byteplus-plan"]);
+    mocks.resolveRuntimeSyntheticAuthProviderRefs.mockReturnValue(["xai"]);
+    mocks.resolveProviderSyntheticAuthWithPlugin.mockReturnValue({
+      apiKey: "independent-runtime-account",
+      source: "env:XAI_API_KEY",
+      mode: "api-key",
+    });
+
+    try {
+      vi.mocked(buildAuthHealthSummary).mockImplementation(actualAuthHealth.buildAuthHealthSummary);
+      await withEnvAsync({ XAI_API_KEY: "independent-runtime-account" }, () =>
+        modelsStatusCommand({ json: true }, localRuntime),
+      );
+      const payload = parseFirstJsonLog(localRuntime);
+      expect(payload.auth.oauth.profiles).toEqual([
+        expect.objectContaining({
+          profileId: "xai:saved",
+          type: "token",
+          status: "expired",
+          reasonCode: "expired",
+        }),
+      ]);
+      const provider = requireProvider(payload.auth.providers, "xai");
+      expect(provider.syntheticAuth).toEqual({ value: "plugin-owned", source: "env:XAI_API_KEY" });
+      expect(provider.effective).toMatchObject({ kind: "env" });
+      expect(
+        payload.auth.providers.map((entry: { provider: string }) => entry.provider),
+      ).not.toContain("x-ai");
+      expect(requireProvider(payload.auth.providers, "byteplus-plan").provider).toBe(
+        "byteplus-plan",
+      );
+      expect(payload.auth.missingProvidersInUse).toEqual([]);
+      expect(JSON.stringify(payload)).not.toContain("independent-runtime-account");
+    } finally {
+      vi.mocked(buildAuthHealthSummary).mockImplementation(originalHealth!);
+      mocks.store.profiles = originalProfiles;
+      mocks.loadConfig.mockImplementation(originalConfig!);
+      mocks.resolveEnvApiKey.mockImplementation(originalEnv!);
+      mocks.resolveRuntimeSyntheticAuthProviderRefs.mockImplementation(originalRefs!);
+      mocks.resolveProviderSyntheticAuthWithPlugin.mockImplementation(originalSynthetic!);
+      mocks.resolveProviderEnvAuthLookupMaps.mockReturnValue(originalLookupMaps);
+      mocks.listProviderEnvAuthLookupKeys.mockImplementation(originalLookupKeys!);
+    }
+  });
+
   it("passes the canonical merged provider config to synthetic auth plugins", async () => {
     const localRuntime = createTestRuntime();
     const originalLoadConfig = mocks.loadConfig.getMockImplementation();
@@ -1957,6 +2088,7 @@ describe("modelsStatusCommand auth overview", () => {
         "workspace-cloud": [
           {
             type: "local-file-with-env",
+            fallbackPaths: [fileURLToPath(import.meta.url)],
             credentialMarker: "workspace-cloud-local-credentials",
             source: "workspace cloud credentials",
           },
@@ -1974,7 +2106,10 @@ describe("modelsStatusCommand auth overview", () => {
     );
 
     try {
-      await modelsStatusCommand({ json: true }, localRuntime);
+      await withConfig(
+        { ...mocks.loadConfig(), models: { providers: { "workspace-cloud": {} } } },
+        () => modelsStatusCommand({ json: true }, localRuntime),
+      );
       const payload = parseFirstJsonLog(localRuntime);
       const workspaceProvider = requireProvider(payload.auth.providers, "workspace-cloud");
       expect(requireRecord(workspaceProvider.effective, "workspace effective auth").kind).toBe(

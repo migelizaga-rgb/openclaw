@@ -1597,6 +1597,32 @@ describe("config io write prepare", () => {
     expect(input).toEqual(before);
   });
 
+  it.each(["amazon-bedrock", "amazon-bedrock-mantle", "google-vertex", "openai", "custom"])(
+    "retains the %s declaration when fields are unset, until the declaration itself is unset",
+    (provider) => {
+      const input: OpenClawConfig = {
+        models: {
+          providers: {
+            [provider]: {
+              baseUrl: "https://fixture.invalid/v1",
+              models: [],
+              headers: { Authorization: "fixture" },
+            },
+          },
+        },
+      };
+      const before = structuredClone(input);
+      const stripped = applyUnsetPathsForWrite(input, [
+        ["models", "providers", provider, "baseUrl"],
+        ["models", "providers", provider, "models"],
+        ["models", "providers", provider, "headers", "Authorization"],
+      ]);
+      expect(stripped).toEqual({ models: { providers: { [provider]: {} } } });
+      expect(input).toEqual(before);
+      expect(applyUnsetPathsForWrite(stripped, [["models", "providers", provider]])).toEqual({});
+    },
+  );
+
   it.each([
     ["invalid array suffix", ["tools", "alsoAllow", "1abc"]],
     ["signed array index", ["tools", "alsoAllow", "+0"]],

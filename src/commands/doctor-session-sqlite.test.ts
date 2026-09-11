@@ -72,12 +72,12 @@ import * as sqliteReaders from "./doctor-session-sqlite-readers.js";
 import {
   createTranscriptEventReader,
   readOnlySqliteValidationSnapshot,
-  resolveTargetSqlitePath,
 } from "./doctor-session-sqlite-readers.js";
 import { recoverDoctorSessionSqliteTargets } from "./doctor-session-sqlite-recover-report.js";
 import { inspectSessionSqliteRecovery } from "./doctor-session-sqlite-recovery-inventory.js";
 import { restoreSessionSqliteMigrationRun } from "./doctor-session-sqlite-restore.js";
 import { retireSessionSqliteRecovery } from "./doctor-session-sqlite-retirement.js";
+import { resolveTargetSqlitePath } from "./doctor-session-sqlite-targets.js";
 import { createDoctorSessionSqliteTargetReport } from "./doctor-session-sqlite-types.js";
 import { runDoctorSessionSqlite, type DoctorSessionSqliteReport } from "./doctor-session-sqlite.js";
 import { withDoctorSqliteMaintenanceLock } from "./doctor-sqlite-maintenance-lock.js";

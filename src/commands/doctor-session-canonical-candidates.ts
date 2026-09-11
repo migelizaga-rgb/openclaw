@@ -18,7 +18,7 @@ import {
   projectExistingAgentDatabaseTargets,
   resolveTargetSqlitePath,
   type ExistingAgentDatabaseTarget,
-} from "./doctor-session-sqlite-readers.js";
+} from "./doctor-session-sqlite-targets.js";
 
 export type CanonicalSessionCandidate = {
   agentId: string;

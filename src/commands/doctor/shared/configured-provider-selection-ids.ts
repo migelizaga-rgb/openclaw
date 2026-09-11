@@ -38,7 +38,8 @@ function collectConfiguredProviderIds(cfg: OpenClawConfig): Set<string> {
     add(providerId);
   }
   const modelByChannel = asNullableRecord(cfg.channels?.modelByChannel);
-  for (const channelMap of Object.values(modelByChannel ?? {})) {
+  for (const [providerId, channelMap] of Object.entries(modelByChannel ?? {})) {
+    add(providerId);
     for (const modelRef of Object.values(asNullableRecord(channelMap) ?? {})) {
       if (typeof modelRef !== "string") {
         continue;

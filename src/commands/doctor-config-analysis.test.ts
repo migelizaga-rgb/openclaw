@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfiguredModelFallbacks } from "../agents/model-selection-resolve.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { validateConfigObjectRaw } from "../config/validation-core.js";
 import { OpenClawSchema } from "../config/zod-schema.js";
 import {
   formatConfigKeyPath,
@@ -30,18 +31,22 @@ describe("doctor config analysis helpers", () => {
     "keeps an auth-only %s binding out of catalog cleanup advice",
     (provider) => {
       noteMock.mockClear();
-      noteOpencodeProviderOverrides(
-        {
-          models: {
-            providers: {
-              [provider]: {
-                apiKey: { source: "env", provider: "default", id: "OPENCODE_API_KEY" },
-              },
+      const validated = validateConfigObjectRaw({
+        models: {
+          providers: {
+            [provider]: {
+              apiKey: { source: "env", provider: "default", id: "OPENCODE_API_KEY" },
             },
           },
         },
-        { opencodePluginActive: true, opencodeGoPluginActive: true },
-      );
+      });
+      if (!validated.ok) {
+        throw new Error("Expected a valid auth-only provider overlay");
+      }
+      noteOpencodeProviderOverrides(validated.config, {
+        opencodePluginActive: true,
+        opencodeGoPluginActive: true,
+      });
       expect(noteMock).not.toHaveBeenCalled();
     },
   );

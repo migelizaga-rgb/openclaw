@@ -1479,12 +1479,15 @@ describe("prepareAgentRuntimeAuthPlan", () => {
         plugins: [
           {
             id: "fixture",
+            providers: ["openai"],
             setup: {
-              providers: [
-                { id: "openai", envVars: ["SHARED_OAUTH_TOKEN", "OPENAI_API_KEY"] },
-                { id: "other", envVars: ["SHARED_OAUTH_TOKEN"] },
-              ],
+              providers: [{ id: "openai", envVars: ["SHARED_OAUTH_TOKEN", "OPENAI_API_KEY"] }],
             },
+          },
+          {
+            id: "other-plugin",
+            providers: ["other"],
+            setup: { providers: [{ id: "other", envVars: ["SHARED_OAUTH_TOKEN"] }] },
           },
         ],
       }),

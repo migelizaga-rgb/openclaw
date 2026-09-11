@@ -138,6 +138,11 @@ export type ModelAuthAvailabilityEvaluation = {
   runtimeAuth?: { id: string; source: "native" };
 };
 export type ModelAuthAvailabilityResolver = {
+  /** Provider auth facts without interpreting a model as a text transport route. */
+  evaluateProviderAuth(
+    provider: string,
+    ref?: ModelAuthAvailabilityRef,
+  ): ModelAuthAvailabilityEvaluation;
   evaluateRuntimeModelAuth(
     this: void,
     provider: string,
@@ -280,6 +285,7 @@ type AuthSourceEvaluation = Pick<
   | "unavailableReason"
   | "unavailableUntil"
   | "environmentVariable"
+  | "runtimeAuth"
 >;
 
 function modeAllowed(provider: string, target: AuthTarget, mode: string | undefined): boolean {
@@ -793,6 +799,7 @@ export function createModelAuthAvailabilityResolver(
             : false,
           selectedAuthMode: configuredBearerMode,
           evidence: "environment",
+          environmentVariable: apiKey.trim(),
         };
       }
       if (!modeAllowed(provider, target, configuredBearerMode)) {
@@ -835,6 +842,7 @@ export function createModelAuthAvailabilityResolver(
         availability: runtimeAvailable ? true : available,
         selectedAuthMode: configuredBearerMode,
         evidence: runtimeAvailable ? "runtime" : "provider-config",
+        ...(apiKeyRef.source === "env" ? { environmentVariable: apiKeyRef.id } : {}),
       };
     }
     if (apiKey !== undefined && !(typeof apiKey === "string" && apiKey.trim() === "")) {
@@ -862,6 +870,9 @@ export function createModelAuthAvailabilityResolver(
         availability: modeAllowed(provider, target, preparedRuntimeAuthMode),
         selectedAuthMode: preparedRuntimeAuthMode,
         evidence: "runtime",
+        ...(typeof preparedRuntimeAuth === "object" && preparedRuntimeAuth.source === "native"
+          ? { runtimeAuth: { id: normalizeProviderIdForAuth(provider), source: "native" as const } }
+          : {}),
       };
     }
     const environment = envAuth(provider);
@@ -1171,18 +1182,22 @@ export function createModelAuthAvailabilityResolver(
   };
   // Provider-only availability is the legacy fallback when no route artifact exists;
   // it never claims a concrete OpenAI endpoint.
+  const evaluateProviderAuth = (
+    provider: string,
+    ref: ModelAuthAvailabilityRef = {},
+  ): ModelAuthAvailabilityEvaluation => ({
+    ...resolveProviderEvaluation(provider, ref),
+    routeResolution: null,
+  });
   const resolveProviderAuthAvailability = (provider: string, ref: ModelAuthAvailabilityRef = {}) =>
-    resolveProviderEvaluation(provider, ref).availability;
+    evaluateProviderAuth(provider, ref).availability;
   const evaluateModelAuth = (
     rawProvider: string,
     ref: ModelAuthAvailabilityRef = {},
   ): ModelAuthAvailabilityEvaluation => {
     const provider = normalizeProviderIdForAuth(rawProvider);
     if (provider !== OPENAI_PROVIDER_ID) {
-      return {
-        ...resolveProviderEvaluation(provider, ref),
-        routeResolution: null,
-      };
+      return evaluateProviderAuth(provider, ref);
     }
     if (invalidProfilePin(provider, ref)) {
       return { availability: false, unavailableReason: "auth-failed", routeResolution: null };
@@ -1540,6 +1555,7 @@ export function createModelAuthAvailabilityResolver(
     providerDiscoveryProviderIds: [...providerDiscoveryProviderIds].toSorted((left, right) =>
       left.localeCompare(right),
     ),
+    evaluateProviderAuth,
     evaluateModelAuth,
     evaluateRuntimeModelAuth: (provider, ref = {}) => {
       const runtimeId =

@@ -36,7 +36,7 @@ import {
 import {
   listExistingAgentDatabaseTargets,
   resolveTargetSqliteOptions,
-} from "./doctor-session-sqlite-readers.js";
+} from "./doctor-session-sqlite-targets.js";
 
 export type ReservedIncognitoKeyRepairReport = {
   found: number;

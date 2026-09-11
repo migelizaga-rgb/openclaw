@@ -1,5 +1,6 @@
 // Model auth overview tests cover provider auth overview rows for model listings.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ModelAuthAvailabilityEvaluation } from "../../agents/model-auth-availability.js";
 import { resolveEnvApiKey } from "../../agents/model-auth.js";
 import {
   createConfigResolutionFacts,
@@ -103,9 +104,10 @@ vi.mock("../../agents/model-auth.js", () => {
   };
 });
 
-function resolveOpenAiOverview(apiKey: string) {
+function resolveOpenAiOverview(apiKey: string, evaluation: ModelAuthAvailabilityEvaluation) {
   return resolveProviderAuthOverview({
     provider: "openai",
+    evaluation,
     cfg: {
       models: {
         providers: {
@@ -141,6 +143,7 @@ describe("resolveProviderAuthOverview", () => {
     };
     const overview = resolveProviderAuthOverview({
       provider: "xai",
+      evaluation: { availability: true, evidence: "synthetic", routeResolution: null },
       cfg: {},
       store: { version: 1, profiles: {} } as never,
       modelsPath: "/tmp/models.json",
@@ -157,6 +160,7 @@ describe("resolveProviderAuthOverview", () => {
   it("labels token profiles that only have tokenRef", () => {
     const overview = resolveProviderAuthOverview({
       provider: "github-copilot",
+      evaluation: { availability: undefined, routeResolution: null },
       cfg: {},
       store: {
         version: 1,
@@ -182,6 +186,12 @@ describe("resolveProviderAuthOverview", () => {
     });
     const overview = resolveProviderAuthOverview({
       provider: "openai",
+      evaluation: {
+        availability: true,
+        evidence: "profile",
+        selectedProfileId: "openai:peter@example.test",
+        routeResolution: null,
+      },
       cfg: {},
       store: {
         version: 1,
@@ -229,6 +239,7 @@ describe("resolveProviderAuthOverview", () => {
     const overview = withEnv({ CUSTOM_PROVIDER_KEY: "current-provider-key" }, () =>
       resolveProviderAuthOverview({
         provider: "custom",
+        evaluation: { availability: true, evidence: "provider-config", routeResolution: null },
         cfg: cfg as never,
         store: {
           version: 1,
@@ -259,6 +270,12 @@ describe("resolveProviderAuthOverview", () => {
     });
     const overview = resolveProviderAuthOverview({
       provider: "openai",
+      evaluation: {
+        availability: true,
+        evidence: "profile",
+        selectedProfileId: "openai:peter@example.test",
+        routeResolution: null,
+      },
       cfg: {},
       store: {
         version: 1,
@@ -284,7 +301,10 @@ describe("resolveProviderAuthOverview", () => {
 
   it("renders marker-backed models.json auth as marker detail", () => {
     const overview = withEnv({ OPENAI_API_KEY: undefined }, () =>
-      resolveOpenAiOverview(NON_ENV_SECRETREF_MARKER),
+      resolveOpenAiOverview(NON_ENV_SECRETREF_MARKER, {
+        availability: false,
+        routeResolution: null,
+      }),
     );
 
     expect(overview.effective.kind).toBe("missing");
@@ -294,7 +314,11 @@ describe("resolveProviderAuthOverview", () => {
 
   it("treats OAuth delegation markers as effective models.json auth", () => {
     const overview = withEnv({ OPENAI_API_KEY: undefined }, () =>
-      resolveOpenAiOverview("oauth:openai"),
+      resolveOpenAiOverview("oauth:openai", {
+        availability: true,
+        evidence: "provider-config",
+        routeResolution: null,
+      }),
     );
 
     expect(overview.effective).toEqual({
@@ -306,7 +330,7 @@ describe("resolveProviderAuthOverview", () => {
 
   it("keeps env-var-shaped models.json values masked to avoid accidental plaintext exposure", () => {
     const overview = withEnv({ OPENAI_API_KEY: undefined }, () =>
-      resolveOpenAiOverview("OPENAI_API_KEY"),
+      resolveOpenAiOverview("OPENAI_API_KEY", { availability: false, routeResolution: null }),
     );
 
     expect(overview.effective.kind).toBe("missing");
@@ -319,7 +343,12 @@ describe("resolveProviderAuthOverview", () => {
     const prior = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = "sk-openai-from-env"; // pragma: allowlist secret
     try {
-      const overview = resolveOpenAiOverview("OPENAI_API_KEY");
+      const overview = resolveOpenAiOverview("OPENAI_API_KEY", {
+        availability: true,
+        evidence: "environment",
+        environmentVariable: "OPENAI_API_KEY",
+        routeResolution: null,
+      });
       expect(overview.effective.kind).toBe("env");
       expect(overview.effective.detail).not.toContain("OPENAI_API_KEY");
     } finally {
@@ -334,6 +363,7 @@ describe("resolveProviderAuthOverview", () => {
   it("keeps setup fallback when precomputed auth maps do not cover the provider", () => {
     resolveProviderAuthOverview({
       provider: "amazon-bedrock",
+      evaluation: { availability: undefined, routeResolution: null },
       cfg: {},
       store: { version: 1, profiles: {} } as never,
       modelsPath: "/tmp/models.json",
@@ -354,6 +384,7 @@ describe("resolveProviderAuthOverview", () => {
   it("skips setup fallback when precomputed auth maps cover the provider", () => {
     resolveProviderAuthOverview({
       provider: "openai",
+      evaluation: { availability: undefined, routeResolution: null },
       cfg: {},
       store: { version: 1, profiles: {} } as never,
       modelsPath: "/tmp/models.json",

@@ -1,6 +1,6 @@
 /**
  * Auth profile health summarization.
- * Classifies stored and runtime credentials into profile/provider rollups for
+ * Classifies stored credentials into profile/provider rollups for
  * status commands and doctor output without prompting keychain access.
  */
 import {
@@ -122,27 +122,16 @@ function resolveOAuthStatus(
 function buildProfileHealth(params: {
   profileId: string;
   credential: AuthProfileCredential;
-  runtimeCredential?: AuthProfileCredential;
   store: AuthProfileStore;
   cfg?: OpenClawConfig;
   now: number;
   warnAfterMs: number;
   allowKeychainPrompt?: boolean;
 }): AuthProfileHealth {
-  const {
-    profileId,
-    credential,
-    runtimeCredential,
-    store,
-    cfg,
-    now,
-    warnAfterMs,
-    allowKeychainPrompt,
-  } = params;
+  const { profileId, credential, store, cfg, now, warnAfterMs, allowKeychainPrompt } = params;
   const label = resolveAuthProfileDisplayLabel({ cfg, store, profileId });
   const source: AuthProfileSource = "store";
-  const healthCredential = runtimeCredential ?? credential;
-  const provider = normalizeProviderId(healthCredential.provider);
+  const provider = normalizeProviderId(credential.provider);
 
   if (credential.setup?.replacement) {
     return {
@@ -156,9 +145,9 @@ function buildProfileHealth(params: {
     };
   }
 
-  if (healthCredential.type === "api_key") {
+  if (credential.type === "api_key") {
     const eligibility = evaluateStoredCredentialEligibility({
-      credential: healthCredential,
+      credential,
       now,
     });
     if (!eligibility.eligible) {
@@ -182,9 +171,9 @@ function buildProfileHealth(params: {
     };
   }
 
-  if (healthCredential.type === "token") {
+  if (credential.type === "token") {
     const eligibility = evaluateStoredCredentialEligibility({
-      credential: healthCredential,
+      credential,
       now,
     });
     if (!eligibility.eligible) {
@@ -200,8 +189,8 @@ function buildProfileHealth(params: {
         label,
       };
     }
-    const expiryState = resolveTokenExpiryState(healthCredential.expires, now);
-    const expiresAt = expiryState === "valid" ? healthCredential.expires : undefined;
+    const expiryState = resolveTokenExpiryState(credential.expires, now);
+    const expiresAt = expiryState === "valid" ? credential.expires : undefined;
     if (!expiresAt) {
       return {
         profileId,
@@ -231,7 +220,7 @@ function buildProfileHealth(params: {
   }
 
   const storedEligibility = evaluateStoredCredentialEligibility({
-    credential: healthCredential,
+    credential,
     now,
   });
   if (!storedEligibility.eligible && storedEligibility.reasonCode === "unresolved_ref") {
@@ -249,7 +238,7 @@ function buildProfileHealth(params: {
   const effectiveCredential = resolveEffectiveOAuthCredential({
     store,
     profileId,
-    credential: healthCredential,
+    credential,
     allowKeychainPrompt,
   });
   const eligibility = evaluateStoredCredentialEligibility({
@@ -292,7 +281,6 @@ export function buildAuthHealthSummary(params: {
   cfg?: OpenClawConfig;
   warnAfterMs?: number;
   providers?: string[];
-  runtimeCredentialsByProvider?: ReadonlyMap<string, AuthProfileCredential>;
   allowKeychainPrompt?: boolean;
   /** Exact prepared metadata for request paths that must not rediscover plugin aliases. */
   authAliasLookupParams?: ProviderAuthAliasLookupParams;
@@ -311,9 +299,6 @@ export function buildAuthHealthSummary(params: {
       buildProfileHealth({
         profileId,
         credential,
-        runtimeCredential: params.runtimeCredentialsByProvider?.get(
-          normalizeProviderId(credential.provider),
-        ),
         store: params.store,
         cfg: params.cfg,
         now,
