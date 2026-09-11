@@ -50,7 +50,7 @@ it.each(
     };
     await state.writeConfig(config);
     const original = await fs.readFile(state.configPath, "utf8");
-    const prepared = await prepareProviderUseBindingMigration({
+    const prepared = prepareProviderUseBindingMigration({
       config,
       configPath: state.configPath,
       env: state.env,
@@ -130,7 +130,7 @@ it.each(
     ]);
     expect(note.mock.calls.flat().join("\n")).not.toContain("Bound selected provider");
     expect(note.mock.calls.flat().join("\n")).not.toContain("fixture-saved-account");
-    const repeated = await prepareProviderUseBindingMigration({
+    const repeated = prepareProviderUseBindingMigration({
       config,
       configPath: state.configPath,
       env: state.env,
@@ -139,9 +139,13 @@ it.each(
   },
 );
 
-it.each(["models", "providers"] as const)(
-  "defers a selected provider binding owned by a %s include without changing either file",
-  async (includeOwner) => {
+it.each(
+  (["models", "providers"] as const).flatMap((includeOwner) =>
+    [false, true].map((repairRoot) => ({ includeOwner, repairRoot })),
+  ),
+)(
+  "defers a selected provider binding owned by a $includeOwner include (root repair: $repairRoot)",
+  async ({ includeOwner, repairRoot }) => {
     state = await createOpenClawTestState({
       label: "doctor-provider-binding-include",
       env: {
@@ -174,19 +178,23 @@ it.each(["models", "providers"] as const)(
     expect(prepared.bindings).toEqual({
       "byteplus-plan": { source: "env", provider: "default", id: "BYTEPLUS_API_KEY" },
     });
+    const cfg = structuredClone(prepared.config);
+    if (repairRoot) {
+      cfg.browser = { enabled: false };
+    }
     const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
     const options = { repair: true, nonInteractive: true };
     const ctx: DoctorHealthFlowContext = {
       runtime,
       options,
       prompter: createDoctorPrompter({ runtime, options }),
-      cfg: prepared.config,
+      cfg,
       cfgForPersistence: structuredClone(prepared.config),
       configPath: state.configPath,
       sourceConfigValid: true,
       env: state.env,
       configResult: {
-        cfg: prepared.config,
+        cfg,
         shouldWriteConfig: true,
         providerUseBindings: prepared.bindings,
         providerUseBindingMigrationPending: prepared.pending,
@@ -196,8 +204,17 @@ it.each(["models", "providers"] as const)(
 
     await runWriteConfigHealth(ctx, { runPostWriteRepairs: false });
 
-    expect(await fs.readFile(state.configPath, "utf8")).toBe(rootContents);
+    const writtenRoot = await fs.readFile(state.configPath, "utf8");
+    if (repairRoot) {
+      expect(JSON.parse(writtenRoot)).toMatchObject({
+        browser: { enabled: false },
+        models: JSON.parse(rootContents).models,
+      });
+    } else {
+      expect(writtenRoot).toBe(rootContents);
+    }
     expect(await fs.readFile(includePath, "utf8")).toBe(includeContents);
+    expect(ctx.configWriteRefusal).toBeUndefined();
     expect(ctx.cfg.models?.providers?.["byteplus-plan"]).toBeUndefined();
     expect(ctx.configResult.providerUseBindingMigrationPending).toBe(false);
     const output = note.mock.calls.flat().join("\n");

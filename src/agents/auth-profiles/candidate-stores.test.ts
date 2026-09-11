@@ -31,7 +31,7 @@ describe("candidate auth profile stores", () => {
     ).toThrow(error);
   });
 
-  it("dedupes configured, state-root, and registered custom database paths", async () => {
+  it("dedupes configured, state-root, and registered custom database paths", () => {
     const tempRoot = tempDirs.make("openclaw-auth-candidates-");
     const stateDir = path.join(tempRoot, "state");
     const configuredAgentDir = path.join(tempRoot, "configured-agent");
@@ -55,7 +55,7 @@ describe("candidate auth profile stores", () => {
         env,
       });
 
-      const candidates = await listCandidateAuthProfileStores({
+      const candidates = listCandidateAuthProfileStores({
         cfg: {
           agents: {
             list: [{ id: "configured", agentDir: configuredAgentDir }],

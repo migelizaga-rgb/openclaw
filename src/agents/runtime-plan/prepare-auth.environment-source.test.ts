@@ -4,6 +4,10 @@ import type { Model } from "../../llm/types.js";
 import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
+import {
+  createEmbeddedRunAuthController,
+  type EmbeddedRunAuthState,
+} from "../embedded-agent-runner/run/auth-controller.js";
 import { prepareAgentRuntimeAuth } from "./prepare-auth.js";
 import {
   resolvePreparedRuntimeAuthAttempts,
@@ -39,9 +43,13 @@ const metadataSnapshot = createPluginMetadataSnapshotFixture({
 describe("prepared environment credential identity", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it.each(["unchanged", "withdrawn", "rotated"] as const)(
-    "keeps resolution on the admitted variable when it is %s during model materialization",
-    async (change) => {
+  it.each(
+    (["prepared-resolver", "ordinary-controller"] as const).flatMap((consumer) =>
+      (["unchanged", "withdrawn", "rotated"] as const).map((change) => ({ consumer, change })),
+    ),
+  )(
+    "$consumer keeps the admitted variable when it is $change during model materialization",
+    async ({ consumer, change }) => {
       vi.stubEnv("OPENAI_API_KEY", "admitted-account-key");
       vi.stubEnv("CODEX_API_KEY", "other-account-key");
       const config: OpenClawConfig = {};
@@ -61,29 +69,69 @@ describe("prepared environment credential identity", () => {
             metadataSnapshot,
             harnessId: "openclaw",
           });
-          const resolution = resolvePreparedRuntimeAuthAttempts({
-            attempts: prepared.attempts,
-            store,
-            modelId: model.id,
-            model,
-            materializeModel: async ({ model: preparedModel }) => {
-              if (change !== "unchanged") {
-                vi.stubEnv(
-                  "OPENAI_API_KEY",
-                  change === "withdrawn" ? undefined : "rotated-admitted-key",
-                );
-              }
-              return preparedModel;
-            },
-            resolveAuth: ({ attempt, model: preparedModel }) =>
-              resolvePreparedRuntimeModelAuth({
-                plan: attempt.plan,
-                model: preparedModel,
-                cfg: config,
-                store,
+          const materializeModel = async () => {
+            if (change !== "unchanged") {
+              vi.stubEnv(
+                "OPENAI_API_KEY",
+                change === "withdrawn" ? undefined : "rotated-admitted-key",
+              );
+            }
+            return model;
+          };
+          const resolveOrdinaryController = async () => {
+            const runtimeModel = await materializeModel();
+            const state: EmbeddedRunAuthState = {
+              models: { runtime: runtimeModel, effective: runtimeModel },
+              apiKeyInfo: null,
+              lastProfileId: undefined,
+              runtimeAuthState: null,
+              runtimeAuthRefreshCancelled: false,
+              profileIndex: 0,
+              thinkLevel: "off",
+            };
+            const controller = createEmbeddedRunAuthController({
+              config,
+              agentDir: "/unused/agent",
+              workspaceDir: "/unused/workspace",
+              authStore: store,
+              authStorage: { setRuntimeApiKey: vi.fn() },
+              profileCandidates: [undefined],
+              initialThinkLevel: "off",
+              attemptedThinking: new Set(),
+              fallbackConfigured: false,
+              allowTransientCooldownProbe: false,
+              provider: model.provider,
+              modelId: model.id,
+              state,
+              prepareModelForAuthProfile: async () => ({
+                runtimeModel,
+                boundEnvVar: prepared.plan.boundEnvVar,
+                allowAuthProfileFallback: false,
+                commit() {},
               }),
-            errorMessage: "Prepared environment credential could not be resolved.",
-          });
+              log: { debug() {}, info() {}, warn() {} },
+            });
+            await controller.initializeAuthProfile();
+            return { auth: state.apiKeyInfo };
+          };
+          const resolution =
+            consumer === "ordinary-controller"
+              ? resolveOrdinaryController()
+              : resolvePreparedRuntimeAuthAttempts({
+                  attempts: prepared.attempts,
+                  store,
+                  modelId: model.id,
+                  model,
+                  materializeModel,
+                  resolveAuth: ({ attempt, model: preparedModel }) =>
+                    resolvePreparedRuntimeModelAuth({
+                      plan: attempt.plan,
+                      model: preparedModel,
+                      cfg: config,
+                      store,
+                    }),
+                  errorMessage: "Prepared environment credential could not be resolved.",
+                });
 
           if (change === "withdrawn") {
             await expect(resolution).rejects.toMatchObject({

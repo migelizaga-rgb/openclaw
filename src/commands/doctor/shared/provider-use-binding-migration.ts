@@ -18,6 +18,7 @@ import {
   resolveProviderUseAdmission,
 } from "../../../agents/provider-model-auth-source-plan.js";
 import type { ConfigWriteOptions } from "../../../config/io.types.js";
+import { isConfigIncludeOwnershipError } from "../../../config/io.write-errors.js";
 import { GuardedConfigIncludeWriteError } from "../../../config/mutation-conflict.js";
 import { resolveResetPreservedSelection } from "../../../config/sessions/reset-preserved-selection.js";
 import { scanDoctorSessionEntriesTolerant } from "../../../config/sessions/session-accessor.js";
@@ -451,12 +452,19 @@ export async function writeProviderUseBindingMigration(
   } catch (error) {
     if (error instanceof ProviderUseBindingPublicationChanged) {
       checked = error.checked;
-    } else if (error instanceof GuardedConfigIncludeWriteError) {
+    } else if (
+      error instanceof GuardedConfigIncludeWriteError ||
+      isConfigIncludeOwnershipError(error)
+    ) {
       const selections = Object.entries(checked.bindings)
         .map(([provider, ref]) => `${provider} (${ref.id})`)
         .join(", ");
+      const includePaths =
+        error instanceof GuardedConfigIncludeWriteError
+          ? error.includePath
+          : (error.includeTargets?.join(", ") ?? error.ownedConfigPath);
       checked.warnings.push(
-        `Provider bindings ${selections} were not written to included config ${error.includePath}. Bind them explicitly in that file.`,
+        `Provider bindings ${selections} were not written to included config ${includePaths}. Bind them explicitly in that file.`,
       );
     } else {
       throw error;

@@ -121,7 +121,7 @@ async function listPeerCandidates(params: {
   ownerDatabasePath: string;
 }): Promise<CandidateAuthProfileStore[]> {
   const ownerDatabasePath = canonicalDatabasePath(params.ownerDatabasePath);
-  return (await listCandidateAuthProfileStores(params)).filter(
+  return listCandidateAuthProfileStores(params).filter(
     (candidate) => candidate.databasePath !== ownerDatabasePath,
   );
 }

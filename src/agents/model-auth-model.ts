@@ -33,7 +33,7 @@ import {
   resolveScopedAuthProfileStore,
   type ProviderCredentialPrecedence,
 } from "./model-auth-provider.js";
-import type { ResolvedProviderAuth } from "./model-auth-runtime-shared.js";
+import { ProviderAuthError, type ResolvedProviderAuth } from "./model-auth-runtime-shared.js";
 import { prepareSyntheticLocalProviderAuth } from "./model-auth-runtime.js";
 import {
   attachModelProviderRequestTransport,
@@ -252,6 +252,13 @@ export async function getApiKeyForModelCore(params: {
   boundEnvVar?: string;
   secretSentinels?: boolean;
 }): Promise<ResolvedProviderAuth> {
+  if (params.boundEnvVar && !normalizeOptionalSecretInput(process.env[params.boundEnvVar])) {
+    throw new ProviderAuthError(
+      "missing-provider-auth",
+      params.model.provider,
+      `Prepared environment credential "${params.boundEnvVar}" is no longer available for ${params.model.provider}. Restore it or prepare a new request.`,
+    );
+  }
   return resolveApiKeyForProviderCore({
     provider: params.model.provider,
     cfg: params.cfg,

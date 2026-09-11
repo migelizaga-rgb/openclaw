@@ -106,7 +106,7 @@ export async function commitStartupConfigRepairs(params: {
       completeProviderUseBindingMigration,
     } = await import("./doctor/shared/provider-use-binding-migration.js");
     const config = snapshot.sourceConfig ?? snapshot.config ?? {};
-    let bindingMigration = await params.runWithPluginMetadataSnapshot({ config }, () =>
+    let bindingMigration = params.runWithPluginMetadataSnapshot({ config }, () =>
       prepareProviderUseBindingMigration({ config, configPath: snapshot.path, env: params.env }),
     );
     params.report({ changes: [], warnings: bindingMigration.warnings ?? [] });

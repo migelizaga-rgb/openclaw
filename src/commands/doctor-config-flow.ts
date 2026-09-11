@@ -399,7 +399,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
 
   const { prepareProviderUseBindingMigration, resolveProviderUseBindingWriteMetadata } =
     await import("./doctor/shared/provider-use-binding-migration.js");
-  const providerUseBindingMigration = await runWithCurrentPluginMetadata(state.candidate, () =>
+  const providerUseBindingMigration = runWithCurrentPluginMetadata(state.candidate, () =>
     prepareProviderUseBindingMigration({
       config: state.candidate,
       configPath: snapshot.path,

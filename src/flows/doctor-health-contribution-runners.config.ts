@@ -192,6 +192,9 @@ async function writeConfigHealth(
           ? "Earlier config fixes were already saved; the remaining changes were not written."
           : "No config changes were written.";
       if (isConfigIncludeOwnershipError(error)) {
+        if (withCommit) {
+          throw error;
+        }
         // The candidate mixed an include-owned repair with root-owned changes; the
         // writer keeps every file intact and names the include boundary, plus its
         // file when the root file authors the directive, to repair first.

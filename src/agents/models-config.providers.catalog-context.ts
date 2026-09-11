@@ -19,7 +19,11 @@ import { isTrustedSecretSurfaceUnavailableError } from "../secrets/runtime-degra
 import { resolveRegisteredAgentIdForDir } from "./agent-dir-registry.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { resolveSelectedModelProviderIds } from "./model-selection-config.js";
-import type { ProviderConfig } from "./models-config.providers.secret-helpers.js";
+import type {
+  ProviderApiKeyResolver,
+  ProviderAuthResolver,
+  ProviderConfig,
+} from "./models-config.providers.secret-helpers.js";
 import { resolveProviderAuthAliasMap, resolveProviderIdForAuth } from "./provider-auth-aliases.js";
 import {
   resolveProviderUseAdmission,
@@ -33,7 +37,9 @@ type ProviderCatalogAuthScope = Pick<
 
 /** A destination's donor permission never depends on another destination's admission. */
 export async function runProviderCatalogForAdmittedDestinations(
-  params: ProviderCatalogAuthScope & {
+  params: Omit<ProviderCatalogAuthScope, "resolveProviderApiKey" | "resolveProviderAuth"> & {
+    resolveProviderApiKey: ProviderApiKeyResolver;
+    resolveProviderAuth: ProviderAuthResolver;
     provider: ProviderPlugin;
     providerIds: readonly string[];
     admission: ReadonlyMap<string, ProviderUseBinding>;

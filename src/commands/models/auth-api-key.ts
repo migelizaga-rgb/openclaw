@@ -114,7 +114,7 @@ export async function saveModelProviderApiKey(params: {
       ? resolvePersistedAuthProfileOwnerAgentDir({ agentDir: params.agentDir, profileId })
       : params.agentDir;
   const localCandidates = connectionId
-    ? (await listCandidateAuthProfileStores({ cfg: config })).filter(
+    ? listCandidateAuthProfileStores({ cfg: config }).filter(
         (candidate) =>
           candidate.databasePath !==
           resolvePathViaExistingAncestorSync(resolveSharedAuthStorePath()),

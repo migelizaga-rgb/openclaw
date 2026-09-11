@@ -314,6 +314,7 @@ export async function prepareEmbeddedRunRuntime(input: {
       runtimeModel: nextRuntimeModel,
       authRequirement: modelDecision.authRequirement,
       allowAuthProfileFallback: attempt.allowAuthProfileFallback,
+      boundEnvVar: attempt.plan.boundEnvVar,
       commit() {
         applyResolvedRuntimeModel(nextRuntimeModel, nextResolvedModel);
         activePreparedAuthPlan = attempt.plan;

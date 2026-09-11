@@ -126,7 +126,7 @@ function admitted(config: OpenClawConfig) {
 
 describe("selected shared-provider upgrade", () => {
   it("keeps a newly selected shared-key fallback pending at the write recheck", async () => {
-    const prepared = await prepare(selectedPlan);
+    const prepared = prepare(selectedPlan);
     assert(prepared.bindings);
     const config = structuredClone(prepared.config);
     config.agents = {
@@ -138,7 +138,7 @@ describe("selected shared-provider upgrade", () => {
         },
       },
     };
-    const checked = await revalidateProviderUseBindingMigration({
+    const checked = revalidateProviderUseBindingMigration({
       config,
       configPath: state.configPath,
       env: state.env,
@@ -162,7 +162,7 @@ describe("selected shared-provider upgrade", () => {
         entries: { main: {} },
       },
     };
-    const result = await prepareProviderUseBindingMigration({
+    const result = prepareProviderUseBindingMigration({
       config,
       configPath: state.configPath,
       env: { ...state.env, BYTEPLUS_API_KEY: undefined },
@@ -192,7 +192,7 @@ describe("selected shared-provider upgrade", () => {
         ],
       });
 
-      const result = await prepare(selectedPlan);
+      const result = prepare(selectedPlan);
 
       expect(result.config).toBe(selectedPlan);
       expect(result.changes).toEqual([]);
@@ -200,8 +200,8 @@ describe("selected shared-provider upgrade", () => {
       expect(result.warnings?.join("\n")).toContain("byteplus-plan");
       expect(result.warnings?.join("\n")).toContain(profileId);
       expect(result.warnings?.join("\n")).not.toContain("saved-account-key");
-      expect((await prepare(selectedPlan)).changes).toEqual([]);
-      const withoutEnv = await prepareProviderUseBindingMigration({
+      expect(prepare(selectedPlan).changes).toEqual([]);
+      const withoutEnv = prepareProviderUseBindingMigration({
         config: selectedPlan,
         configPath: state.configPath,
         env: { ...state.env, BYTEPLUS_API_KEY: undefined },
@@ -250,7 +250,7 @@ describe("selected shared-provider upgrade", () => {
       expect(readProfiles("beta")).toEqual({});
       const before = structuredClone(config);
 
-      const result = await prepare(config);
+      const result = prepare(config);
 
       expect(result.pending).toBe(false);
       expect(result.config.models?.providers?.["byteplus-plan"]).toBeUndefined();
@@ -268,7 +268,7 @@ describe("selected shared-provider upgrade", () => {
       expect(config).toEqual(before);
       expect(readProfiles("alpha")).toEqual(alphaAccount.profiles);
       expect(readProfiles("beta")).toEqual({});
-      const repeated = await prepare(result.config);
+      const repeated = prepare(result.config);
       expect(repeated.pending).toBe(false);
       expect(repeated.changes).toEqual([]);
 
@@ -286,13 +286,13 @@ describe("selected shared-provider upgrade", () => {
         },
         "beta",
       );
-      const repaired = await prepare(result.config);
+      const repaired = prepare(result.config);
       expect(repaired.pending).toBe(true);
       expect(repaired.changes).toEqual([]);
       expect(repaired.warnings).toBeUndefined();
       expect(readProfiles("alpha")).toEqual(alphaAccount.profiles);
       expect(completeProviderUseBindingMigration(state.configPath, state.env)).toEqual([]);
-      expect((await prepare(result.config)).pending).toBe(false);
+      expect(prepare(result.config).pending).toBe(false);
     },
   );
 
@@ -330,7 +330,7 @@ describe("selected shared-provider upgrade", () => {
     });
     const before = loadSessionEntry(scope);
 
-    const result = await prepare(config);
+    const result = prepare(config);
 
     expect(result.config).toBe(config);
     expect(result.changes).toEqual([]);
@@ -364,7 +364,7 @@ describe("selected shared-provider upgrade", () => {
     };
     await state.writeAuthProfiles(inactive, "alpha");
 
-    const result = await prepare(config);
+    const result = prepare(config);
 
     expect(result.pending).toBe(false);
     expect(result.warnings?.join("\n")).toContain("byteplus-plan:replacement");
@@ -401,7 +401,7 @@ describe("selected shared-provider upgrade", () => {
       };
       const original = structuredClone(config);
 
-      const result = await prepare(config);
+      const result = prepare(config);
 
       expect(result.pending).toBe(true);
       expect(result.config.models?.providers).toEqual({
@@ -421,7 +421,7 @@ describe("selected shared-provider upgrade", () => {
       expect(admitted(result.config).has("byteplus-plan")).toBe(true);
       expect(admitted(result.config).has("volcengine-plan")).toBe(true);
       expect(admitted(result.config).has("minimax-portal")).toBe(false);
-      const second = await prepare(result.config);
+      const second = prepare(result.config);
       expect(second.config).toBe(result.config);
       expect(second.changes).toEqual([]);
     },
@@ -447,7 +447,7 @@ describe("selected shared-provider upgrade", () => {
       };
       const original = structuredClone(config);
 
-      const result = await prepare(config);
+      const result = prepare(config);
 
       expect(Object.keys(result.config.models?.providers ?? {})).toEqual(["byteplus-plan"]);
       expect(result.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
@@ -485,7 +485,7 @@ describe("selected shared-provider upgrade", () => {
       };
       const original = structuredClone(config);
 
-      const result = await prepare(config);
+      const result = prepare(config);
 
       expect(Object.keys(result.config.models?.providers ?? {}).toSorted()).toEqual([
         "byteplus-plan",
@@ -577,7 +577,7 @@ describe("selected shared-provider upgrade", () => {
     }
     const before = scopes.map((scope) => loadSessionEntry(scope));
 
-    const result = await prepare(config);
+    const result = prepare(config);
 
     expect(Object.keys(result.config.models?.providers ?? {}).toSorted()).toEqual([
       "byteplus-plan",
@@ -615,7 +615,7 @@ describe("selected shared-provider upgrade", () => {
       JSON.stringify({ type: "authorized_user" }),
     );
 
-    const result = await prepareProviderUseBindingMigration({
+    const result = prepareProviderUseBindingMigration({
       config,
       configPath: state.configPath,
       env,
@@ -639,7 +639,7 @@ describe("selected shared-provider upgrade", () => {
       },
     });
 
-    const result = await prepare(selectedPlan);
+    const result = prepare(selectedPlan);
 
     expect(result.config).toBe(selectedPlan);
     expect(result.changes).toEqual([]);
@@ -652,19 +652,19 @@ describe("selected shared-provider upgrade", () => {
     '{"agents":{"defaults":{"model":{"primary":9,"fallbacks":[null,3,{}]}},"entries":{"broken":null}}}',
   ])("leaves malformed operator shapes intact: %s", async (serialized) => {
     const config: OpenClawConfig = JSON.parse(serialized);
-    const result = await prepare(config);
+    const result = prepare(config);
     expect(result.config).toEqual(config);
     expect(result.changes).toEqual([]);
   });
 
   it("does not reopen a completed upgrade after binding removal or a later selection", async () => {
-    const migrated = await prepare(selectedPlan);
+    const migrated = prepare(selectedPlan);
     expect(migrated.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
     expect(completeProviderUseBindingMigration(state.configPath, state.env)).toEqual([]);
 
     for (const model of ["byteplus-plan/ark-code-latest", "volcengine-plan/ark-code-latest"]) {
       const config: OpenClawConfig = { agents: { defaults: { model } } };
-      const result = await prepare(config);
+      const result = prepare(config);
       expect(result).toEqual({ config, changes: [], pending: false });
       expect(admitted(result.config).has(model.split("/")[0]!)).toBe(false);
     }
@@ -674,16 +674,16 @@ describe("selected shared-provider upgrade", () => {
     const config: OpenClawConfig = JSON.parse(
       `{"agents":{"defaults":{"model":"byteplus-plan/ark-code-latest"}},"secrets":{"defaults":{"env":${alias}}}}`,
     );
-    expect(await prepare(config)).toEqual({ config, changes: [], pending: false });
+    expect(prepare(config)).toEqual({ config, changes: [], pending: false });
   });
 
   it("closes an empty successful upgrade before a new shared-key selection appears", async () => {
-    const empty = await prepare({ agents: { entries: { main: {} } } });
+    const empty = prepare({ agents: { entries: { main: {} } } });
     expect(empty.changes).toEqual([]);
     expect(empty.pending).toBe(true);
     expect(completeProviderUseBindingMigration(state.configPath, state.env)).toEqual([]);
 
-    const result = await prepare(selectedPlan);
+    const result = prepare(selectedPlan);
     expect(result).toEqual({ config: selectedPlan, changes: [], pending: false });
     expect(admitted(result.config).has("byteplus-plan")).toBe(false);
   });
@@ -713,7 +713,7 @@ describe("selected shared-provider upgrade", () => {
       { agentId: "main", env: state.env },
     );
 
-    const result = await prepare(selectedPlan);
+    const result = prepare(selectedPlan);
 
     expect(result).toMatchObject({ config: selectedPlan, changes: [], pending: false });
     expect(result.warnings).toEqual([expect.stringContaining("Rerun")]);
@@ -724,7 +724,7 @@ describe("selected shared-provider upgrade", () => {
     await fs.mkdir(path.dirname(databasePath), { recursive: true });
     await fs.writeFile(databasePath, "not a SQLite database");
 
-    const result = await prepare(selectedPlan);
+    const result = prepare(selectedPlan);
 
     expect(result).toMatchObject({ config: selectedPlan, changes: [], pending: false });
     expect(result.warnings).toEqual([expect.stringContaining("Rerun")]);
@@ -738,7 +738,7 @@ describe("Doctor provider-binding write composition", () => {
       await import("../../../flows/doctor-health-contribution-runners.config.js");
     await state.writeConfig(selectedPlan);
     vi.stubEnv("BYTEPLUS_API_KEY", undefined);
-    const absent = await prepareProviderUseBindingMigration({
+    const absent = prepareProviderUseBindingMigration({
       config: selectedPlan,
       configPath: state.configPath,
       env: { ...state.env, BYTEPLUS_API_KEY: undefined },
@@ -747,7 +747,7 @@ describe("Doctor provider-binding write composition", () => {
     await runWriteConfigHealth(shellDoctor, { runPostWriteRepairs: false });
 
     vi.stubEnv("BYTEPLUS_API_KEY", state.env.BYTEPLUS_API_KEY);
-    const retry = await prepare(selectedPlan);
+    const retry = prepare(selectedPlan);
     expect(retry.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
     expect(absent.pending).toBe(false);
     expect(absent.warnings?.join("\n")).toContain("BYTEPLUS_API_KEY");
@@ -760,7 +760,7 @@ describe("Doctor provider-binding write composition", () => {
     const third = await prepareDoctorContext(state.configPath);
     await runWriteConfigHealth(third, { runPostWriteRepairs: false });
     expect(await fs.readFile(state.configPath, "utf8")).toBe(written);
-    expect(await prepare(selectedPlan)).toEqual({
+    expect(prepare(selectedPlan)).toEqual({
       config: selectedPlan,
       changes: [],
       pending: false,
@@ -810,7 +810,7 @@ describe("Doctor provider-binding write composition", () => {
       expect(afterHealthRepair.models?.providers?.["byteplus-plan"]).toEqual(expected);
       expect(afterHealthRepair.gateway?.port).toBe(19491);
       expect(context.configWriteRefusal).toBeUndefined();
-      expect(await prepare(selectedPlan)).toEqual({
+      expect(prepare(selectedPlan)).toEqual({
         config: selectedPlan,
         changes: [],
         pending: false,
@@ -842,7 +842,7 @@ describe("Doctor provider-binding write composition", () => {
     await runWriteConfigHealth(context, { runPostWriteRepairs: false });
 
     expect(await fs.readFile(state.configPath, "utf8")).toBe(original);
-    const retry = await prepare(selectedPlan);
+    const retry = prepare(selectedPlan);
     expect(retry.pending).toBe(true);
     expect(retry.config.models?.providers?.["byteplus-plan"]?.apiKey).toEqual(byteplusRef);
   });
@@ -892,7 +892,7 @@ describe("Doctor provider-binding write composition", () => {
 
     const persisted: OpenClawConfig = JSON.parse(await fs.readFile(state.configPath, "utf8"));
     expect(persisted.models?.providers?.["byteplus-plan"]).toEqual({ apiKey: byteplusRef });
-    expect(await prepare(selectedPlan)).toEqual({
+    expect(prepare(selectedPlan)).toEqual({
       config: selectedPlan,
       changes: [],
       pending: false,
