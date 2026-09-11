@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { findUsableNodeRuntime } from "../../../node-runtime-recovery.mjs";
-import { resolveTargetNodeRuntime } from "./update-command-node-runtime.js";
+import { resolveTargetNodeRuntime } from "./update-command-node-runtime-resolution.js";
 
 vi.mock("../../../node-runtime-recovery.mjs", () => ({ findUsableNodeRuntime: vi.fn() }));
 const fetchMock = vi.fn();

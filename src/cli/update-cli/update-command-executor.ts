@@ -17,8 +17,9 @@ import {
   resolveUpdateCommandChildBinding,
   type UpdateCommandChildGrant,
 } from "./update-command-executor-grant.js";
-export type { UpdateCommandChildGrant } from "./update-command-executor-grant.js";
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery.js";
+
+export type { UpdateCommandChildGrant } from "./update-command-executor-grant.js";
 
 /** A live invocation, never a serialized claim, PID or recovered history row. */
 export type UpdateCommandExecutor = {

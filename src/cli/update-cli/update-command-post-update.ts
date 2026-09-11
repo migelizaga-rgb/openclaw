@@ -1,4 +1,3 @@
-import { theme } from "../../../packages/terminal-core/src/theme.js";
 import type { TriageFailureContext } from "../../commands/triage-prompt.js";
 import { readConfigFileSnapshot } from "../../config/config.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -10,8 +9,7 @@ import { recordUpdateRunStep } from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
 import { classifyUpdateOutcome } from "../../shared/update-outcome.js";
-import { formatCliCommand } from "../command-format.js";
-import { tryWriteCompletionCache } from "./shared.js";
+import { refreshUpdateCompletionCache } from "./update-command-completion.js";
 import { convergeUpdatePlugins } from "./update-command-convergence.js";
 import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import { retireStandaloneGitWrapper } from "./update-command-git.js";
@@ -662,17 +660,7 @@ export async function finishUpdate(params: FinishUpdateParams): Promise<UpdateRu
     }
     // Restart and health verification own recovery of the service stopped for this update.
     // Optional completion refresh must run only after that lifecycle boundary settles.
-    try {
-      await tryWriteCompletionCache(postUpdateRoot, Boolean(params.opts.json));
-    } catch (err) {
-      if (!params.opts.json) {
-        defaultRuntime.log(
-          theme.warn(
-            `Completion cache update failed: ${formatErrorMessage(err)}. Update will continue; retry with: ${formatCliCommand("openclaw completion --write-state")}`,
-          ),
-        );
-      }
-    }
+    await refreshUpdateCompletionCache(postUpdateRoot, Boolean(params.opts.json));
     await tryInstallShellCompletion({
       jsonMode: Boolean(params.opts.json),
       skipPrompt: Boolean(params.opts.yes),

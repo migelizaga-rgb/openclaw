@@ -18,7 +18,7 @@ import { nodeVersionSatisfiesEngine } from "../../infra/runtime-guard.js";
 import { parseTcpPortFromArgs } from "../../infra/tcp-port.js";
 import { CLI_NAME } from "../cli-name.js";
 import { resolveNodeRunner } from "./shared.js";
-import type { PackageRuntimeRecovery } from "./update-command-node-runtime.js";
+import type { PackageRuntimeRecovery } from "./update-command-node-runtime-resolution.js";
 
 export type ManagedServiceRootRedirect = {
   root: string;
@@ -167,7 +167,8 @@ export async function resolvePackageRuntimePreflight(params: {
     return ok(unchangedRuntime);
   }
   if (params.runtimeRecovery && target.nodeEngine) {
-    const { resolveTargetNodeRuntime } = await import("./update-command-node-runtime.js");
+    const { resolveTargetNodeRuntime } =
+      await import("./update-command-node-runtime-resolution.js");
     const recovered = await resolveTargetNodeRuntime({
       engine: target.nodeEngine,
       recovery: params.runtimeRecovery,

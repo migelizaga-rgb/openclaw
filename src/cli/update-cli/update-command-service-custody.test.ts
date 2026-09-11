@@ -125,9 +125,9 @@ it.each([
     if (supported === true && destination !== "foreign") {
       expect(await work).toBe("accepted");
       expect(await fs.readFile(effect, "utf8")).toBe("owned");
-      const observed = JSON.parse(await fs.readFile(receipt, "utf8"));
-      expect(observed).toMatchObject({ parent: process.pid, noRespawn: "1" });
-      expect(observed.pid).not.toBe(process.pid);
+      const childReceipt = JSON.parse(await fs.readFile(receipt, "utf8"));
+      expect(childReceipt).toMatchObject({ parent: process.pid, noRespawn: "1" });
+      expect(childReceipt.pid).not.toBe(process.pid);
     } else {
       await expect(work).rejects.toThrow(
         destination === "foreign" ? /installation|binding/ : "cannot fence",

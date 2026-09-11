@@ -82,6 +82,22 @@ export async function executeMutableUpdate(
   params: MutableUpdateExecutionParams,
 ): Promise<MutableUpdateExecutionResult | null> {
   const { opts, updateStepTimeoutMs } = params;
+  const inspectContexts = (
+    roots: string[],
+    services?: ReadonlyMap<string, PreManagedServiceStop>,
+  ) =>
+    inspectUpdateDatabaseContexts({
+      roots,
+      expectedServices: services,
+      updateInstallKind: params.updateInstallKind === "git" ? "git" : "package",
+      shouldRestart: params.shouldRestart,
+      jsonMode: Boolean(opts.json),
+      timeoutMs: updateStepTimeoutMs,
+      invocationCwd: params.invocationCwd,
+      managedServiceRootRedirect: params.managedServiceRootRedirect,
+      managedServiceRoot: params.managedServiceRoot,
+      legacyConfigPlan: params.legacyConfigPlan,
+    });
   if (opts.recovery) {
     throw new UpdatePreMutationError(
       "rollback-state-unverified",
@@ -104,18 +120,7 @@ export async function executeMutableUpdate(
         "Database admission was not inspected.",
       );
     }
-    await inspectUpdateDatabaseContexts({
-      roots: [...admission.services.keys()],
-      updateInstallKind: params.updateInstallKind === "git" ? "git" : "package",
-      shouldRestart: params.shouldRestart,
-      jsonMode: Boolean(opts.json),
-      timeoutMs: updateStepTimeoutMs,
-      invocationCwd: params.invocationCwd,
-      managedServiceRootRedirect: params.managedServiceRootRedirect,
-      managedServiceRoot: params.managedServiceRoot,
-      expectedServices: admission.services,
-      legacyConfigPlan: params.legacyConfigPlan,
-    });
+    await inspectContexts([...admission.services.keys()], admission.services);
     admission.contexts = await Promise.all(admission.contexts.map(revalidateUpdateDatabaseContext));
     const schemas = await checkTargetDatabaseSchemasForContexts(versions, admission.contexts);
     if (hasSchemaRefusal(schemas)) {
@@ -142,6 +147,9 @@ export async function executeMutableUpdate(
   };
   let recoveryEnv: NodeJS.ProcessEnv | undefined;
   let packageTransaction: PackageUpdateTransaction | undefined;
+  const onTransaction = (transaction: PackageUpdateTransaction) => {
+    packageTransaction = transaction;
+  };
   let schemaVersions: Awaited<ReturnType<typeof readUpdateStateSchemaVersions>> | undefined;
   let candidateSchemaVersions: OpenClawSchemaVersions | undefined;
   let previousSchemaVersions: OpenClawSchemaVersions | undefined;
@@ -552,17 +560,7 @@ export async function executeMutableUpdate(
   };
   try {
     if (params.updateInstallKind === "package" || params.updateInstallKind === "git") {
-      admission = await inspectUpdateDatabaseContexts({
-        roots: gitMutationRoots ?? [params.root],
-        updateInstallKind: params.updateInstallKind,
-        shouldRestart: params.shouldRestart,
-        jsonMode: Boolean(opts.json),
-        timeoutMs: updateStepTimeoutMs,
-        invocationCwd: params.invocationCwd,
-        managedServiceRootRedirect: params.managedServiceRootRedirect,
-        managedServiceRoot: params.managedServiceRoot,
-        legacyConfigPlan: params.legacyConfigPlan,
-      });
+      admission = await inspectContexts(gitMutationRoots ?? [params.root]);
     }
     if (params.updateInstallKind === "package") {
       if (!stagedPluginAdmission) {
@@ -594,9 +592,7 @@ export async function executeMutableUpdate(
         validateCandidate,
         beforeActivate,
         managedServiceEnv: preManagedServiceStop?.serviceEnv,
-        onTransaction: (transaction) => {
-          packageTransaction = transaction;
-        },
+        onTransaction,
         onConfigSnapshot,
       };
       await recheckSchemas(params.packageTargetSchemaVersions);
@@ -629,9 +625,7 @@ export async function executeMutableUpdate(
             gitContextPrepared = true;
           }
         },
-        onTransaction: (transaction) => {
-          packageTransaction = transaction;
-        },
+        onTransaction,
         onConfigSnapshot,
         // Foreign inspection metadata cannot authorize backup or Doctor writes.
         getManagedServiceEnv: () => ownedManagedUpdateContext?.env,
