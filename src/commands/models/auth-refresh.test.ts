@@ -19,7 +19,73 @@ vi.mock("../../gateway/call.js", async () => {
   };
 });
 
-const { refreshRunningGatewayAuthState } = await import("./auth-refresh.js");
+const { readRunningGatewayModelAuthStatus, refreshRunningGatewayAuthState } =
+  await import("./auth-refresh.js");
+
+describe("readRunningGatewayModelAuthStatus", () => {
+  const target = { config: {}, agentId: "main", agentDir: "/tmp/status-agent" };
+
+  beforeEach(() => {
+    mocks.callGateway.mockReset();
+  });
+
+  it("uses only the serving snapshot from the same local auth and agent scope", async () => {
+    const servingAuth = { agentId: "main", agentDir: "/tmp/status-agent", models: [] };
+    mocks.callGateway.mockResolvedValue({ ts: 1, providers: [], servingAuth });
+    await expect(readRunningGatewayModelAuthStatus(target)).resolves.toEqual(servingAuth);
+    expect(mocks.callGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "models.authStatus",
+        params: { agentId: "main" },
+        requireLocalBackendSharedAuth: true,
+        sharedStateMode: "read-only",
+      }),
+    );
+  });
+
+  it.each([
+    { agentId: "other", agentDir: "/tmp/status-agent" },
+    { agentId: "main", agentDir: "/tmp/other-agent" },
+  ])("ignores a different serving scope $agentId at $agentDir", async (scope) => {
+    mocks.callGateway.mockResolvedValue({
+      ts: 1,
+      providers: [],
+      servingAuth: { ...scope, models: [] },
+    });
+    await expect(readRunningGatewayModelAuthStatus(target)).resolves.toBeUndefined();
+  });
+
+  it("keeps older Gateway replies compatible without inferring a source from inventory", async () => {
+    mocks.callGateway.mockResolvedValue({
+      ts: 1,
+      providers: [{ provider: "openai", apiKey: { source: "env", envVar: "OPENAI_API_KEY" } }],
+    });
+    await expect(readRunningGatewayModelAuthStatus(target)).resolves.toBeUndefined();
+  });
+
+  it("allows standalone status when no Gateway is reachable", async () => {
+    mocks.callGateway.mockRejectedValue(new Error("unreachable"));
+    await expect(readRunningGatewayModelAuthStatus(target)).resolves.toBeUndefined();
+  });
+
+  it("does not replace unavailable serving preparation with a local auth guess", async () => {
+    mocks.callGateway.mockResolvedValue({
+      ts: 1,
+      providers: [],
+      unavailable: { code: "PREPARED_MODEL_AUTH_UNAVAILABLE", message: "Auth preparation pending" },
+    });
+    await expect(readRunningGatewayModelAuthStatus(target)).rejects.toThrow(
+      "Auth preparation pending",
+    );
+  });
+
+  it("surfaces a serving publication race instead of selecting a local account", async () => {
+    mocks.callGateway.mockRejectedValue(
+      new GatewayClientRequestError({ code: "UNAVAILABLE", message: "Serving auth changed" }),
+    );
+    await expect(readRunningGatewayModelAuthStatus(target)).rejects.toThrow("Serving auth changed");
+  });
+});
 
 describe("refreshRunningGatewayAuthState", () => {
   beforeEach(() => {

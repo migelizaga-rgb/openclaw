@@ -3,6 +3,8 @@ import type {
   AuthProviderHealthStatus,
 } from "../../agents/auth-health.js";
 import type { AuthCredentialReasonCode } from "../../agents/auth-profiles/credential-state.js";
+import type { AgentHarnessRuntimeAvailability } from "../../agents/harness/runtime-plugin.js";
+import type { ModelAuthAvailabilityEvaluation } from "../../agents/model-auth-availability.js";
 import type {
   ProviderUsageBilling,
   UsageProviderId,
@@ -69,6 +71,33 @@ export type ModelProviderCapability = {
   loginOptions?: import("../../plugins/provider-login-options.js").ProviderLoginOption[];
 };
 
+export type ModelServingAuth = {
+  provider: string;
+  model: string;
+  availability?: boolean;
+  availabilityAuthoritative?: true;
+  unavailableReason?: ModelAuthAvailabilityEvaluation["unavailableReason"];
+  unavailableUntil?: number;
+  authRequirement?: NonNullable<
+    ModelAuthAvailabilityEvaluation["selectedRoute"]
+  >["authRequirement"];
+  selectedProfileId?: string;
+  selectedAuthMode?: string;
+  evidence?: ModelAuthAvailabilityEvaluation["evidence"];
+  environmentVariable?: string;
+  runtimeAuth?: { id: string; source: "native" };
+  requestedRuntimeId?: string;
+  runtimeAvailability?: AgentHarnessRuntimeAvailability;
+  routeIncompatibility?: { code: string; message: string };
+  runtimeIncompatibility?: { code: string; message: string };
+};
+
+export type ModelAuthServingSnapshot = {
+  agentId: string;
+  agentDir: string;
+  models: ModelServingAuth[];
+};
+
 export type ModelAuthStatusResult = {
   /** Snapshot build time, ms since epoch. 0 = never loaded (UI fallback sentinel). */
   ts: number;
@@ -80,6 +109,8 @@ export type ModelAuthStatusResult = {
   };
   /** Process-stable provider setup capabilities from the active plugin generation. */
   providerCapabilities?: ModelProviderCapability[];
+  /** Effective configured-model routes from the running agent's prepared owner. */
+  servingAuth?: ModelAuthServingSnapshot;
 };
 
 export type ModelAuthLogoutResult = {

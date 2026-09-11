@@ -49,6 +49,7 @@ import {
 } from "./models-auth-refresh.js";
 import { resolveProviderApiKeys } from "./models-auth-status-api-keys.js";
 import { resolveConfigBoundProfileIds } from "./models-auth-status-config.js";
+import { buildModelAuthServingSnapshot } from "./models-auth-status-serving.js";
 import {
   type ProviderUsageStatus,
   readProviderUsageStaleWhileRevalidate,
@@ -68,10 +69,12 @@ export type {
   ModelAuthExpiry,
   ModelAuthLogoutResult,
   ModelAuthOrderSetResult,
+  ModelAuthServingSnapshot,
   ModelAuthStatusProfile,
   ModelAuthStatusProvider,
   ModelAuthStatusResult,
   ModelProviderCapability,
+  ModelServingAuth,
 } from "./models-auth-status.types.js";
 
 const log = createSubsystemLogger("models-auth-status");
@@ -705,7 +708,13 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         workspaceDir,
         metadataSnapshot: preparedSnapshot.metadataSnapshot,
       });
-      const result: ModelAuthStatusResult = { ts: now, providers, providerCapabilities };
+      const servingAuth = await buildModelAuthServingSnapshot(preparedSnapshot);
+      const result: ModelAuthStatusResult = {
+        ts: now,
+        providers,
+        providerCapabilities,
+        servingAuth,
+      };
       respond(true, result, undefined);
     });
   },

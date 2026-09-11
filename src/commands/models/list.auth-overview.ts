@@ -91,6 +91,8 @@ export function resolveProviderAuthOverview(params: {
   authEvidenceMap?: Readonly<Record<string, readonly ProviderAuthEvidence[]>>;
   /** The routing owner's selected credential; inventory presence cannot override this result. */
   evaluation: ModelAuthAvailabilityEvaluation;
+  /** The selected source belongs to the running Gateway, not this process's local secrets. */
+  serving?: boolean;
 }): ProviderAuthOverview {
   const { provider, cfg, store } = params;
   const now = Date.now();
@@ -222,17 +224,22 @@ export function resolveProviderAuthOverview(params: {
           ? { kind: "synthetic", detail: params.syntheticAuth.source }
           : { kind: "profiles", detail: evaluation.selectedProfileId };
     }
+    if (params.serving && evaluation.environmentVariable) {
+      return { kind: "env", detail: evaluation.environmentVariable };
+    }
     if (evaluation.evidence === "environment" && envValue) {
       return { kind: "env", detail: envValue };
     }
     if (evaluation.evidence === "provider-config") {
-      return configuredSource();
+      return params.serving
+        ? { kind: "models.json", detail: "Gateway provider configuration" }
+        : configuredSource();
     }
     if (evaluation.evidence === "synthetic") {
       return { kind: "synthetic", detail: params.syntheticAuth?.source ?? "provider-managed" };
     }
     if (evaluation.evidence === "runtime") {
-      return usableCustomKey
+      return usableCustomKey && !params.serving
         ? configuredSource()
         : { kind: "runtime", detail: evaluation.selectedAuthMode ?? "runtime auth" };
     }

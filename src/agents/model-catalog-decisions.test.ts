@@ -12,6 +12,7 @@ import {
 import {
   createModelCatalogDecisions,
   resolveCatalogDecisionRuntime,
+  resolveCatalogDecisionRuntimeStatus,
 } from "./model-catalog-decisions.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import * as openaiRoutes from "./openai-model-routes.js";
@@ -56,6 +57,55 @@ function nativeOwner(complete: boolean, loggedIn: boolean, isCurrent = () => tru
 
 describe("captured model decisions", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("reports a missing serving harness separately from valid authentication", () => {
+    const status = resolveCatalogDecisionRuntimeStatus({
+      cfg: config,
+      agentId: "main",
+      entry,
+      evaluation: {
+        availability: true,
+        selectedAuthMode: "api_key",
+        selectedProfileId: "openai:valid",
+        routeResolution: null,
+      },
+      pluginRegistry: createEmptyPluginRegistry(),
+    });
+    expect(status.runtime).toEqual({ id: "codex", source: "model" });
+    expect(status.runtimeAvailability).toMatchObject({
+      status: "unavailable",
+      reason: "owner-plugin-not-activatable",
+    });
+    expect(status.runtimeIncompatibility).toBeUndefined();
+  });
+
+  it("reports captured harness incompatibility without reinterpreting the provider name", () => {
+    const registry = createEmptyPluginRegistry();
+    registry.agentHarnesses.push({
+      pluginId: "codex",
+      source: "fixture",
+      harness: {
+        id: "codex",
+        label: "Codex",
+        supports: () => ({ supported: false, reason: "Fixture route is unsupported" }),
+        async runAttempt() {
+          throw new Error("Status must not execute a model");
+        },
+      },
+    });
+    const status = resolveCatalogDecisionRuntimeStatus({
+      cfg: config,
+      agentId: "main",
+      entry,
+      evaluation: { availability: true, routeResolution: null },
+      pluginRegistry: registry,
+    });
+    expect(status.runtimeAvailability).toEqual({ status: "available", ownerPluginIds: ["codex"] });
+    expect(status.runtimeIncompatibility).toEqual({
+      code: "unsupported-runtime-provider",
+      message: "The codex runtime does not support provider openai.",
+    });
+  });
 
   it.each([true, false])(
     "keeps retained account choices specific to each catalog model (runtime history=%s)",

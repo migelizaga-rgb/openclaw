@@ -58,6 +58,18 @@ The list shows model inventory. Status explains the configured default, fallback
 and authentication for their routes. It does not inspect a chat session's model
 override; use [`/model status`](/concepts/models#model-in-chat) in that session.
 
+When a running local Gateway shares the selected auth state and agent directory,
+status uses that Gateway's effective source for unpinned default and fallback
+models. This preserves the distinction between a newly saved account and the
+credential that still serves a working route. Environment sources are identified
+by variable name; credential values are not fetched from the Gateway. Stored
+profile health remains a separate report.
+
+Without an applicable Gateway, or with an older Gateway that does not report
+serving sources, status evaluates the local configuration. `--probe` always uses
+the local probe path. A Gateway that cannot currently prepare its auth status
+returns an error instead of substituting a local source.
+
 #### Read status correctly
 
 These sections answer different questions:

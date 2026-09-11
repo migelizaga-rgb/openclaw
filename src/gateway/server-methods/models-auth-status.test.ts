@@ -135,6 +135,10 @@ vi.mock("../server-model-catalog-auth.js", () => ({
   readPreparedCatalog: mocks.readPreparedCatalog,
 }));
 
+vi.mock("./models-auth-status-serving.js", () => ({
+  buildModelAuthServingSnapshot: vi.fn(async () => undefined),
+}));
+
 import { modelsAuthOrderHandlers } from "./models-auth-order.js";
 import { clearModelAuthStatusUsageCache } from "./models-auth-status-usage-cache.js";
 import {

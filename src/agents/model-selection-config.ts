@@ -8,6 +8,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { listAgentEntriesWithSource } from "./agent-scope-config.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
+import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import type { ModelManifestNormalizationContext, ModelRef } from "./model-ref-shared.js";
 import {
   buildModelAliasIndex,
@@ -34,7 +35,7 @@ function hasSelectedOverride(entry: unknown, fields: readonly string[]): boolean
 export function collectSelectedModelProviders(params: {
   cfg: OpenClawConfig;
   agentId?: string;
-}): { provider: string; path: string; mainModel: boolean }[] {
+}): { provider: string; model: string; profileId?: string; path: string; mainModel: boolean }[] {
   const agentId = params.agentId ? normalizeAgentId(params.agentId) : undefined;
   const local = agentId
     ? listAgentEntriesWithSource(params.cfg).find(
@@ -53,7 +54,7 @@ export function collectSelectedModelProviders(params: {
     allowPluginNormalization: false,
   };
   const primary = resolveDefaultModelForAgent(selection);
-  const providers: { provider: string; path: string; mainModel: boolean }[] = [];
+  const providers: ReturnType<typeof collectSelectedModelProviders> = [];
   const aliasIndex = buildModelAliasIndex({ ...selection, defaultProvider: primary.provider });
   for (const ref of collectConfiguredModelRefs(params.cfg)) {
     let suffix: string | undefined;
@@ -87,8 +88,12 @@ export function collectSelectedModelProviders(params: {
       aliasIndex,
     });
     if (resolved) {
+      const resolvedModel = splitTrailingAuthProfile(resolved.ref.model);
+      const profileId = splitTrailingAuthProfile(ref.value).profile ?? resolvedModel.profile;
       providers.push({
         provider: normalizeProviderId(resolved.ref.provider),
+        model: resolvedModel.model,
+        ...(profileId ? { profileId } : {}),
         path: ref.path,
         mainModel: suffix === "model" || suffix?.startsWith("model.") === true,
       });

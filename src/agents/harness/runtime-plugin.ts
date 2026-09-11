@@ -45,7 +45,7 @@ function describeMissingHarnessRegistration(
   runtime: string,
   pluginRegistry: PluginRegistry | undefined,
   config: OpenClawConfig | undefined,
-): string {
+): Extract<AgentHarnessRuntimeAvailability, { status: "unavailable" }> {
   const context = getPluginRuntimeLoadContext(pluginRegistry);
   const activationSourceConfig = context?.activationSourceConfig ?? config;
   const manifestOwnerPluginIds =
@@ -65,12 +65,27 @@ function describeMissingHarnessRegistration(
           : [],
     ),
   ].toSorted();
+  const unavailable = (
+    reason: Extract<AgentHarnessRuntimeAvailability, { status: "unavailable" }>["reason"],
+    detail: string,
+  ): Extract<AgentHarnessRuntimeAvailability, { status: "unavailable" }> => ({
+    status: "unavailable",
+    ownerPluginIds,
+    reason,
+    detail,
+  });
   const plugins = normalizePluginsConfig(activationSourceConfig?.plugins);
   if (ownerPluginIds.length === 0) {
     if (!plugins.enabled) {
-      return `(reason=owner-plugin-not-activatable). Plugins are disabled, so no plugin can register agent harness "${runtime}". Enable plugins and the plugin that provides this runtime, restart the Gateway, then retry or select a model that does not require this runtime.`;
+      return unavailable(
+        "owner-plugin-not-activatable",
+        `(reason=owner-plugin-not-activatable). Plugins are disabled, so no plugin can register agent harness "${runtime}". Enable plugins and the plugin that provides this runtime, restart the Gateway, then retry or select a model that does not require this runtime.`,
+      );
     }
-    return `(reason=owner-plugin-not-activatable). Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.`;
+    return unavailable(
+      "owner-plugin-not-activatable",
+      `(reason=owner-plugin-not-activatable). Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.`,
+    );
   }
 
   const failedOwner = ownerPluginIds
@@ -78,13 +93,19 @@ function describeMissingHarnessRegistration(
     .find((plugin) => plugin?.status === "error");
   if (failedOwner) {
     const phase = failedOwner.failurePhase ?? "load";
-    return `(reason=owner-plugin-degraded, ownerPluginId=${failedOwner.id}). Run "openclaw plugins inspect ${failedOwner.id} --runtime --json". Owner plugin "${failedOwner.id}" failed during ${phase}. Repair the reported plugin failure, restart the Gateway, then retry or select a model that does not require this runtime.`;
+    return unavailable(
+      "owner-plugin-degraded",
+      `(reason=owner-plugin-degraded, ownerPluginId=${failedOwner.id}). Run "openclaw plugins inspect ${failedOwner.id} --runtime --json". Owner plugin "${failedOwner.id}" failed during ${phase}. Repair the reported plugin failure, restart the Gateway, then retry or select a model that does not require this runtime.`,
+    );
   }
   const loadedOwner = ownerPluginIds
     .map((pluginId) => pluginRegistry?.plugins.find((plugin) => plugin.id === pluginId))
     .find((plugin) => plugin?.status === "loaded");
   if (loadedOwner) {
-    return `(reason=owner-plugin-degraded, ownerPluginId=${loadedOwner.id}). Run "openclaw plugins inspect ${loadedOwner.id} --runtime --json". Owner plugin "${loadedOwner.id}" loaded but did not register agent harness "${runtime}". Repair the reported plugin failure, restart the Gateway, then retry or select a model that does not require this runtime.`;
+    return unavailable(
+      "owner-plugin-degraded",
+      `(reason=owner-plugin-degraded, ownerPluginId=${loadedOwner.id}). Run "openclaw plugins inspect ${loadedOwner.id} --runtime --json". Owner plugin "${loadedOwner.id}" loaded but did not register agent harness "${runtime}". Repair the reported plugin failure, restart the Gateway, then retry or select a model that does not require this runtime.`,
+    );
   }
 
   const blockers: string[] = [];
@@ -118,7 +139,26 @@ function describeMissingHarnessRegistration(
   // Bound the rendered summary, not the owner set used to classify availability.
   const detail =
     blockers.length > 0 ? blockers.slice(0, 3).join("; ") : "The owner plugin did not register";
-  return `(${reason}${ownerField}=${ownerPluginIds.slice(0, 3).join(",")}). Run "openclaw doctor --fix". ${detail}. Repair the plugin or select a model that does not require this runtime, restart the Gateway, then retry.`;
+  return unavailable(
+    blockers.length === ownerPluginIds.length
+      ? "owner-plugin-not-activatable"
+      : "owner-plugin-degraded",
+    `(${reason}${ownerField}=${ownerPluginIds.slice(0, 3).join(",")}). Run "openclaw doctor --fix". ${detail}. Repair the plugin or select a model that does not require this runtime, restart the Gateway, then retry.`,
+  );
+}
+
+/** Reads serving registration facts without discovering or activating plugins. */
+export function readAgentHarnessRuntimeAvailability(params: {
+  runtime: string;
+  pluginRegistry: PluginRegistry | undefined;
+  config?: OpenClawConfig;
+}): AgentHarnessRuntimeAvailability {
+  const registration = params.pluginRegistry?.agentHarnesses.find(
+    (entry) => entry.harness.id === params.runtime,
+  );
+  return registration
+    ? { status: "available", ownerPluginIds: [registration.pluginId] }
+    : describeMissingHarnessRegistration(params.runtime, params.pluginRegistry, params.config);
 }
 
 /**
@@ -220,9 +260,8 @@ export async function ensureSelectedAgentHarnessPlugin(params: {
     return;
   }
 
-  if (!params.pluginRegistry?.agentHarnesses.some((entry) => entry.harness.id === runtime)) {
-    throw new Error(
-      `Agent harness runtime "${runtime}" is unavailable. ${describeMissingHarnessRegistration(runtime, params.pluginRegistry, params.config)}`,
-    );
+  const availability = readAgentHarnessRuntimeAvailability({ ...params, runtime });
+  if (availability.status === "unavailable") {
+    throw new Error(`Agent harness runtime "${runtime}" is unavailable. ${availability.detail}`);
   }
 }

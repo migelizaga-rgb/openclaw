@@ -79,6 +79,7 @@ import { resolveRuntimeSyntheticAuthProviderRefs } from "../../plugins/synthetic
 import { type RuntimeEnv, writeRuntimeJson, writeRuntimeStdout } from "../../runtime.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { resolveUserPath, shortenHomePath } from "../../utils.js";
+import { readRunningGatewayModelAuthStatus } from "./auth-refresh.js";
 import {
   formatProviderAuthProfileCounts,
   resolveProviderAuthOverview,
@@ -143,11 +144,16 @@ type StatusProviderUse = {
   usesCodexRuntimeAuth: boolean;
   runtimeAvailability?: AgentHarnessRuntimeAvailability;
   runtimeIncompatibility?: { code: string; message: string };
+  routeIncompatibility?: { code: string; message: string };
+  authRequirement?: ProviderModelRouteCandidate["authRequirement"];
+  serving?: true;
 };
 
 function resolveStatusProviderUseIncompatibility(usage: StatusProviderUse) {
   const routeResolution = usage.evaluation.routeResolution;
-  return routeResolution?.kind === "incompatible" ? routeResolution : usage.runtimeIncompatibility;
+  return routeResolution?.kind === "incompatible"
+    ? routeResolution
+    : (usage.routeIncompatibility ?? usage.runtimeIncompatibility);
 }
 
 type StatusRuntimeAuthStatus = "usable" | "missing" | "indeterminate";
@@ -611,6 +617,19 @@ export async function modelsStatusCommand(
           id: stripSelfProviderModelPrefix(provider, modelKey(provider, entry.id)),
         });
       };
+      const servingAuth = opts.probe
+        ? undefined
+        : await readRunningGatewayModelAuthStatus({
+            config: cfg,
+            agentId: workspaceAgentId,
+            agentDir,
+          });
+      const servingModels = new Map(
+        servingAuth?.models.map((entry) => [
+          resolveStatusRouteIdentityKey({ provider: entry.provider, id: entry.model }),
+          entry,
+        ]),
+      );
       for (const entry of catalog.routeVariants) {
         if (entry.api === undefined && entry.baseUrl === undefined) {
           continue;
@@ -624,7 +643,42 @@ export async function modelsStatusCommand(
         resolver: ModelAuthAvailabilityResolver,
       ): Promise<StatusProviderUse[]> =>
         await Promise.all(
-          providerUseRefs.map(async (usage) => {
+          providerUseRefs.map(async (usage): Promise<StatusProviderUse> => {
+            const serving =
+              usage.routeScope === "text"
+                ? servingModels.get(
+                    resolveStatusRouteIdentityKey({ provider: usage.provider, id: usage.model }),
+                  )
+                : undefined;
+            if (serving) {
+              const {
+                provider: _provider,
+                model: _model,
+                runtimeAvailability,
+                runtimeIncompatibility,
+                routeIncompatibility,
+                authRequirement,
+                ...evaluation
+              } = serving;
+              return {
+                provider: usage.provider,
+                model: usage.model,
+                allowCodexRuntimeFallback: usage.allowCodexRuntimeFallback,
+                evaluation: {
+                  ...evaluation,
+                  availability: serving.availability,
+                  availabilityAuthoritative: true,
+                  routeResolution: null,
+                },
+                usesCodexRuntimeAuth:
+                  serving.runtimeAuth?.id === "codex" || serving.requestedRuntimeId === "codex",
+                runtimeAvailability,
+                runtimeIncompatibility,
+                routeIncompatibility,
+                authRequirement,
+                serving: true,
+              };
+            }
             const observedRoutes = routeSourcesByModel.get(
               resolveStatusRouteIdentityKey({ provider: usage.provider, id: usage.model }),
             );
@@ -705,6 +759,7 @@ export async function modelsStatusCommand(
                 model: usage.model,
                 allowCodexRuntimeFallback: usage.allowCodexRuntimeFallback,
                 runtime: normalizedRuntime,
+                servingEvaluation: usage.serving ? usage.evaluation : undefined,
               }
             : undefined;
         })
@@ -799,6 +854,7 @@ export async function modelsStatusCommand(
       const resolveAuthOverview = (
         provider: string,
         evaluation: ModelAuthAvailabilityEvaluation,
+        serving?: boolean,
       ) => {
         const syntheticProvider = evaluation.runtimeAuth?.id ?? provider;
         const syntheticAuth = syntheticAuthByProvider.get(syntheticProvider);
@@ -821,6 +877,7 @@ export async function modelsStatusCommand(
           envCandidateMap,
           authEvidenceMap,
           evaluation,
+          serving,
         });
       };
       const providerAuth = Array.from(
@@ -836,18 +893,22 @@ export async function modelsStatusCommand(
           const uses = providerUses.filter(
             (usage) => normalizeProviderId(usage.provider) === normalizeProviderId(provider),
           );
-          const evaluation =
-            uses.find((usage) => usage.evaluation.availability === true)?.evaluation ??
-            uses[0]?.evaluation ??
-            authResolver.evaluateModelAuth(provider);
-          return resolveAuthOverview(provider, evaluation);
+          const use = uses.find((usage) => usage.evaluation.availability === true) ?? uses[0];
+          return resolveAuthOverview(
+            provider,
+            use?.evaluation ?? authResolver.evaluateModelAuth(provider),
+            use?.serving,
+          );
         })
         .filter((entry) => {
           const hasAny =
             entry.profiles.count > 0 ||
             Boolean(entry.env) ||
             Boolean(entry.modelsJson) ||
-            Boolean(entry.syntheticAuth);
+            Boolean(entry.syntheticAuth) ||
+            providerUses.some(
+              (usage) => usage.serving && normalizeProviderId(usage.provider) === entry.provider,
+            );
           return hasAny;
         });
       const runtimeAuthStore = getRuntimeAuthProfileStoreSnapshot(agentDir);
@@ -875,7 +936,7 @@ export async function modelsStatusCommand(
         )?.runtime;
       const hasUsableAuthForProviderInUse = (usage: (typeof providerUses)[number]): boolean => {
         const cliRuntimeAuthProvider = resolveCliRuntimeAuthProvider(usage);
-        if (cliRuntimeAuthProvider) {
+        if (cliRuntimeAuthProvider && !usage.serving) {
           return authResolver.resolveProviderAuthAvailability(cliRuntimeAuthProvider) !== false;
         }
         if (resolveStatusProviderUseIncompatibility(usage)) {
@@ -898,6 +959,7 @@ export async function modelsStatusCommand(
           const effective = resolveAuthOverview(
             codexProvider,
             representative?.evaluation ?? authResolver.evaluateModelAuth(codexProvider),
+            representative?.serving,
           ).effective;
           const availabilities = usages.map((usage) => usage.evaluation.availability);
           const authStatus = availabilities.every((availability) => availability === true)
@@ -930,8 +992,13 @@ export async function modelsStatusCommand(
           return [`${provider}:codex:${codexProvider}`, route] as const;
         }),
         ...cliRuntimeAuthUsages.map((usage) => {
-          const evaluation = authResolver.evaluateModelAuth(usage.runtime);
-          const effective = resolveAuthOverview(usage.runtime, evaluation).effective;
+          const evaluation =
+            usage.servingEvaluation ?? authResolver.evaluateModelAuth(usage.runtime);
+          const effective = resolveAuthOverview(
+            usage.runtime,
+            evaluation,
+            usage.servingEvaluation !== undefined,
+          ).effective;
           return [
             `${usage.provider}:${usage.runtime}:${usage.runtime}`,
             {
@@ -954,9 +1021,10 @@ export async function modelsStatusCommand(
       ).toSorted((a, b) => a.provider.localeCompare(b.provider));
       const modelRouteIssues = providerUses.flatMap<StatusModelRouteIssue>((usage) => {
         const cliRuntimeAuthProvider = resolveCliRuntimeAuthProvider(usage);
-        const evaluation = cliRuntimeAuthProvider
-          ? authResolver.evaluateModelAuth(cliRuntimeAuthProvider)
-          : usage.evaluation;
+        const evaluation =
+          cliRuntimeAuthProvider && !usage.serving
+            ? authResolver.evaluateModelAuth(cliRuntimeAuthProvider)
+            : usage.evaluation;
         const incompatibility = resolveStatusProviderUseIncompatibility(usage);
         if (incompatibility) {
           return [
@@ -980,10 +1048,11 @@ export async function modelsStatusCommand(
             },
           ];
         }
-        if (!usage.evaluation.selectedRoute || evaluation.availability) {
+        const authRequirement =
+          usage.authRequirement ?? usage.evaluation.selectedRoute?.authRequirement;
+        if (!authRequirement || evaluation.availability) {
           return [];
         }
-        const authRequirement = usage.evaluation.selectedRoute.authRequirement;
         return [
           {
             kind: "missing-auth" as const,
@@ -1173,9 +1242,10 @@ export async function modelsStatusCommand(
             return "missing";
           }
           const cliRuntimeAuthProvider = resolveCliRuntimeAuthProvider(usage);
-          const evaluation = cliRuntimeAuthProvider
-            ? authResolver.evaluateModelAuth(cliRuntimeAuthProvider)
-            : usage.evaluation;
+          const evaluation =
+            cliRuntimeAuthProvider && !usage.serving
+              ? authResolver.evaluateModelAuth(cliRuntimeAuthProvider)
+              : usage.evaluation;
           if (evaluation.availability === undefined) {
             return "indeterminate";
           }

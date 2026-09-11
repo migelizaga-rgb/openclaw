@@ -3,7 +3,9 @@ import { fileURLToPath } from "node:url";
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it, type Mock, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import * as runtimeAliases from "../../agents/model-runtime-aliases.js";
 import type { ModelDefinitionConfig } from "../../config/types.js";
+import type { ModelAuthServingSnapshot } from "../../gateway/server-methods/models-auth-status.types.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { setCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata.test-support.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
@@ -53,6 +55,9 @@ const mocks = vi.hoisted(() => {
 
   return {
     store,
+    readRunningGatewayModelAuthStatus: vi.fn<() => Promise<ModelAuthServingSnapshot | undefined>>(
+      async () => undefined,
+    ),
     resolveAgentDir: vi.fn().mockReturnValue("/tmp/openclaw-agent"),
     resolveAgentWorkspaceDir: vi.fn().mockReturnValue("/tmp/openclaw-agent/workspace"),
     resolveDefaultAgentId: vi.fn().mockReturnValue("main"),
@@ -296,6 +301,9 @@ vi.mock("./load-config.js", () => ({
     mocks.loadModelsConfigArgs(...args);
     return mocks.loadConfig();
   }),
+}));
+vi.mock("./auth-refresh.js", () => ({
+  readRunningGatewayModelAuthStatus: mocks.readRunningGatewayModelAuthStatus,
 }));
 vi.mock("../../infra/provider-usage.js", () => ({
   formatUsageWindowSummary: vi.fn().mockReturnValue("-"),
@@ -550,6 +558,140 @@ async function withOpenAIStatusFixture<T>(
 }
 
 describe("modelsStatusCommand auth overview", () => {
+  it.each([true, false])(
+    "uses serving readiness for a CLI runtime alias: %s",
+    async (available) => {
+      const alias = vi
+        .spyOn(runtimeAliases, "resolveCliRuntimeExecutionProvider")
+        .mockImplementation(({ provider }) => (provider === "openai" ? "fixture-cli" : undefined));
+      mocks.readRunningGatewayModelAuthStatus.mockResolvedValueOnce({
+        agentId: "main",
+        agentDir: "/tmp/openclaw-agent",
+        models: [
+          {
+            provider: "openai",
+            model: "gpt-5.4",
+            availability: available,
+            runtimeAuth: { id: "fixture-cli", source: "native" },
+            requestedRuntimeId: "fixture-cli",
+            evidence: "synthetic",
+          },
+        ],
+      });
+      try {
+        await withOpenAIStatusFixture(
+          {
+            primary: "openai/gpt-5.4",
+            utilityModel: "",
+            profiles: {},
+            resolveEnvApiKey: () => null,
+          },
+          async () => {
+            const statusRuntime = createTestRuntime();
+            await modelsStatusCommand({ json: true, check: true }, statusRuntime);
+            const status = parseFirstJsonLog(statusRuntime);
+            expect(status.auth.modelRouteIssues).toEqual([]);
+            expect(status.auth.missingProvidersInUse).toEqual(available ? [] : ["fixture-cli"]);
+            expect(statusRuntime.exit).toHaveBeenCalledWith(available ? 0 : 1);
+          },
+        );
+      } finally {
+        alias.mockRestore();
+      }
+    },
+  );
+
+  it.each([true, false])(
+    "reports the serving environment source despite local account presence=%s",
+    async (savedAccount) => {
+      mocks.readRunningGatewayModelAuthStatus.mockResolvedValueOnce({
+        agentId: "main",
+        agentDir: "/tmp/openclaw-agent",
+        models: [
+          {
+            provider: "openai",
+            model: "gpt-5.4",
+            availability: true,
+            requestedRuntimeId: "openclaw",
+            selectedAuthMode: "api-key",
+            evidence: "provider-config",
+            environmentVariable: "OPENAI_API_KEY",
+          },
+        ],
+      });
+      await withOpenAIStatusFixture(
+        {
+          primary: "openai/gpt-5.4",
+          utilityModel: "",
+          agentRuntime: "openclaw",
+          profiles: savedAccount
+            ? { "openai:saved": { provider: "openai", type: "api_key", key: "new-account" } }
+            : {},
+        },
+        async () => {
+          const statusRuntime = createTestRuntime();
+          await modelsStatusCommand({ json: true }, statusRuntime);
+          const status = parseFirstJsonLog(statusRuntime);
+          expect(status.auth.providers).toContainEqual(
+            expect.objectContaining({
+              provider: "openai",
+              effective: { kind: "env", detail: "OPENAI_API_KEY" },
+              profiles: expect.objectContaining({ count: savedAccount ? 1 : 0 }),
+            }),
+          );
+          expect(status.auth.missingProvidersInUse).not.toContain("openai");
+        },
+      );
+    },
+  );
+
+  it("keeps the serving owner's unavailable result despite a usable local key", async () => {
+    mocks.readRunningGatewayModelAuthStatus.mockResolvedValueOnce({
+      agentId: "main",
+      agentDir: "/tmp/openclaw-agent",
+      models: [
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          availability: false,
+          requestedRuntimeId: "openclaw",
+          unavailableReason: "missing-auth",
+          authRequirement: "api-key",
+        },
+      ],
+    });
+    await withOpenAIStatusFixture(
+      {
+        primary: "openai/gpt-5.4",
+        utilityModel: "",
+        agentRuntime: "openclaw",
+        profiles: {},
+        providerApiKey: "local-account",
+        resolveEnvApiKey: () => ({ apiKey: "local-account", source: "env: OPENAI_API_KEY" }),
+      },
+      async () => {
+        const statusRuntime = createTestRuntime();
+        await modelsStatusCommand({ json: true }, statusRuntime);
+        const status = parseFirstJsonLog(statusRuntime);
+        expect(status.auth.providers).toContainEqual(
+          expect.objectContaining({
+            provider: "openai",
+            effective: { kind: "missing", detail: "missing" },
+          }),
+        );
+        expect(status.auth.missingProvidersInUse).toContain("openai");
+        expect(status.auth.modelRouteIssues).toContainEqual(
+          expect.objectContaining({
+            kind: "missing-auth",
+            provider: "openai",
+            model: "gpt-5.4",
+            authRequirement: "api-key",
+          }),
+        );
+      },
+    );
+  });
+
   it("shows cooldown reasons and recovery guidance in JSON and text output", async () => {
     const now = Date.now();
     const store = mocks.store as typeof mocks.store & {

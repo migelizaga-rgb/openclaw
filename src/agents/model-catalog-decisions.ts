@@ -18,6 +18,7 @@ import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { listCliRuntimeModelBackendBindings } from "./cli-backends.js";
 import { resolveAgentHarnessAvailabilityDecision } from "./harness/availability.js";
 import { resolveAgentHarnessPolicy } from "./harness/policy.js";
+import { readAgentHarnessRuntimeAvailability } from "./harness/runtime-plugin.js";
 import { buildAgentHarnessSupportContext, resolveAutoAgentHarnessId } from "./harness/support.js";
 import {
   createModelAuthAvailabilityResolver,
@@ -466,6 +467,37 @@ export function resolveCatalogDecisionRuntime(params: {
   evaluation: ModelAuthAvailabilityEvaluation;
   pluginRegistry?: PluginRegistry;
 }): GatewayAgentRuntime | undefined {
+  return selectCatalogDecisionRuntime(params).runtime;
+}
+
+/** Carries the serving harness decision to status clients without exposing route data. */
+export function resolveCatalogDecisionRuntimeStatus(
+  params: Parameters<typeof resolveCatalogDecisionRuntime>[0],
+) {
+  const { runtime, support } = selectCatalogDecisionRuntime(params);
+  return {
+    runtime,
+    runtimeAvailability:
+      runtime &&
+      runtime.id !== "openclaw" &&
+      !listCliRuntimeModelBackendBindings().some((binding) => binding.runtime === runtime.id)
+        ? readAgentHarnessRuntimeAvailability({
+            runtime: runtime.id,
+            pluginRegistry: params.pluginRegistry,
+            config: params.cfg,
+          })
+        : undefined,
+    runtimeIncompatibility:
+      runtime && support && !support.supported
+        ? {
+            code: "unsupported-runtime-provider",
+            message: `The ${runtime.id} runtime does not support provider ${params.entry.provider}.`,
+          }
+        : undefined,
+  };
+}
+
+function selectCatalogDecisionRuntime(params: Parameters<typeof resolveCatalogDecisionRuntime>[0]) {
   const route = params.evaluation.selectedRoute;
   const context = {
     config: params.cfg,
@@ -490,13 +522,14 @@ export function resolveCatalogDecisionRuntime(params: {
     preparedModelProvider: true,
   };
   const select = () => {
-    const { policy } = resolveAgentHarnessAvailabilityDecision({
+    const { policy, support } = resolveAgentHarnessAvailabilityDecision({
       ...context,
       mode: "projection",
       agentHarnessRuntimeOverride: params.evaluation.requestedRuntimeId,
     });
     return {
       policy,
+      support,
       runtime:
         policy.runtime === "auto"
           ? (resolveAutoAgentHarnessId(context) ?? "openclaw")
@@ -514,6 +547,7 @@ export function resolveCatalogDecisionRuntime(params: {
         });
         return {
           policy,
+          support: undefined,
           runtime:
             params.evaluation.requestedRuntimeId ??
             (policy.runtime === "auto" ? "openclaw" : policy.runtime),
@@ -532,10 +566,15 @@ export function resolveCatalogDecisionRuntime(params: {
     runtime === "openclaw" &&
     !params.evaluation.requestedRuntimeId
   ) {
-    return undefined;
+    return {};
   }
-  return {
+  const agentRuntime: GatewayAgentRuntime = {
     id: runtime,
     source: selected.policy.runtimeSource ?? "implicit",
+  };
+  const support = selected.policy.runtime === runtime ? selected.support : undefined;
+  return {
+    runtime: agentRuntime,
+    support,
   };
 }

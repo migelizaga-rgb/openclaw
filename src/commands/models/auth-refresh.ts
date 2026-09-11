@@ -1,15 +1,50 @@
-/** Shared gateway refresh for CLI auth writes made outside the gateway process. */
+/** Gateway model-auth reads and refreshes for CLI operations sharing its local state. */
+import path from "node:path";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   callGateway,
   GatewayLocalBackendSharedAuthUnavailableError,
   isGatewayClientRequestError,
   isImplicitLocalGatewayTarget,
 } from "../../gateway/call.js";
+import type {
+  ModelAuthServingSnapshot,
+  ModelAuthStatusResult,
+} from "../../gateway/server-methods/models-auth-status.types.js";
 import { isGatewayTransportError } from "../../gateway/transport-error.js";
 import type { RuntimeEnv } from "../../runtime.js";
 
 export type ModelAuthRefreshOperation = "login" | "logout" | "update";
 export type ModelAuthRefreshOutcome = "refreshed" | "gateway-rejected" | "gateway-unreachable";
+
+/** A standalone or older host has no serving snapshot; never infer one from inventory. */
+export async function readRunningGatewayModelAuthStatus(params: {
+  config: OpenClawConfig;
+  agentId: string;
+  agentDir: string;
+}): Promise<ModelAuthServingSnapshot | undefined> {
+  const result = await callGateway<ModelAuthStatusResult>({
+    config: params.config,
+    method: "models.authStatus",
+    params: { agentId: params.agentId },
+    timeoutMs: 3000,
+    requireLocalBackendSharedAuth: true,
+    sharedStateMode: "read-only",
+  }).catch((error: unknown) => {
+    if (isGatewayClientRequestError(error) && error.gatewayCode === "UNAVAILABLE") {
+      throw error;
+    }
+    return undefined;
+  });
+  if (result?.unavailable) {
+    throw new Error(result.unavailable.message);
+  }
+  const serving = result?.servingAuth;
+  return serving?.agentId === params.agentId &&
+    path.resolve(serving.agentDir) === path.resolve(params.agentDir)
+    ? serving
+    : undefined;
+}
 
 export async function refreshRunningGatewayAuthState(
   agentId: string | undefined,
