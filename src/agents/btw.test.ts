@@ -517,7 +517,10 @@ function createSideQuestionParams(
   overrides: Partial<RunBtwSideQuestionParams> = {},
 ): RunBtwSideQuestionParams {
   return {
-    cfg: { agents: { entries: { main: { default: true } } } } as never,
+    cfg: {
+      agents: { entries: { main: { default: true } } },
+      models: { providers: { anthropic: {} } },
+    } as never,
     agentId: "main",
     agentDir: DEFAULT_AGENT_DIR,
     provider: DEFAULT_PROVIDER,
@@ -900,7 +903,10 @@ describe("runBtwSideQuestion", () => {
     );
 
     const result = await runBtwSideQuestion({
-      cfg: { agents: { entries: { main: { default: true } } } } as never,
+      cfg: {
+        agents: { entries: { main: { default: true } } },
+        models: { providers: { anthropic: {} } },
+      } as never,
       agentId: "main",
       agentDir: DEFAULT_AGENT_DIR,
       provider: DEFAULT_PROVIDER,
@@ -1017,6 +1023,7 @@ describe("runBtwSideQuestion", () => {
         agentId: "work",
         cfg: {
           agents: { ownership: "explicit", entries: { main: {}, work: {} } },
+          models: { providers: { anthropic: {} } },
           session: { scope: "global" },
         },
         sessionKey: "global",
@@ -1162,7 +1169,10 @@ describe("runBtwSideQuestion", () => {
   );
 
   it("keeps model, runtime auth, and stream selection on prepared A after current advances to B", async () => {
-    const cfg = { agents: { entries: { main: { default: true } } } } as never;
+    const cfg = {
+      agents: { entries: { main: { default: true } } },
+      models: { providers: { "local-proxy": {} } },
+    } as never;
     const generationA = createModelGenerationFixture({
       agentDir: state.agentDir(),
       workspaceDir: state.workspaceDir,
@@ -1435,7 +1445,10 @@ describe("runBtwSideQuestion", () => {
       try {
         await expect(
           runSideQuestion({
-            cfg: { diagnostics: { enabled } },
+            cfg: {
+              diagnostics: { enabled },
+              models: { providers: { anthropic: {} } },
+            },
             sessionEntry,
             authorityRunId,
             ...(mode === "direct-block"
@@ -1974,6 +1987,7 @@ describe("runBtwSideQuestion", () => {
 
     const result = await runSideQuestion({
       cfg: {
+        models: { providers: { "github-copilot": {} } },
         agents: {
           defaults: {
             models: {
@@ -2676,6 +2690,7 @@ describe("runBtwSideQuestion", () => {
     mockDoneAnswer("Copilot answer.");
 
     const result = await runSideQuestion({
+      cfg: { models: { providers: { "github-copilot": {} } } },
       provider: "github-copilot",
       model: "gpt-5.4",
     });
@@ -2721,7 +2736,11 @@ describe("runBtwSideQuestion", () => {
       .mockReturnValue(makeAsyncEvents([createDoneEvent("Ollama Cloud answer.")]));
     registerProviderStreamForModelMock.mockReturnValue(providerStreamFn);
 
-    const result = await runSideQuestion({ provider: "ollama", model: "glm-5.1" });
+    const result = await runSideQuestion({
+      cfg: { models: { providers: { ollama: {} } } },
+      provider: "ollama",
+      model: "glm-5.1",
+    });
 
     expect(result).toEqual({ text: "Ollama Cloud answer." });
     const registerParams = expectRecordFields(mockArg(registerProviderStreamForModelMock, 0, 0), {
@@ -2755,6 +2774,7 @@ describe("runBtwSideQuestion", () => {
     });
 
     const result = await runSideQuestion({
+      cfg: { models: { providers: { "minimax-portal": {} } } },
       provider: "minimax-portal",
       model: "MiniMax-M2.7",
     });
@@ -2824,7 +2844,7 @@ describe("runBtwSideQuestion", () => {
     streamSimpleMock.mockReturnValue(makeAsyncEvents([createDoneEvent("Bedrock answer.")]));
 
     const result = await runBtwSideQuestion({
-      cfg: {} as never,
+      cfg: { models: { providers: { "amazon-bedrock": {} } } },
       agentId: "main",
       agentDir: DEFAULT_AGENT_DIR,
       provider: "amazon-bedrock",

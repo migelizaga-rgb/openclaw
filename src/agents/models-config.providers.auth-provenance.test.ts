@@ -171,6 +171,16 @@ describe("models-config provider auth provenance", () => {
         [];
       const errors: unknown[] = [];
       const env: NodeJS.ProcessEnv = {};
+      const withHealthyProvider = (config: OpenClawConfig): OpenClawConfig => ({
+        ...config,
+        models: {
+          ...config.models,
+          providers: {
+            healthy: { baseUrl: "https://healthy.example.test", models: [] },
+            ...config.models?.providers,
+          },
+        },
+      });
       let emitProfileOutcome = false;
       discovery.providers = [
         {
@@ -267,19 +277,22 @@ describe("models-config provider auth provenance", () => {
             resolveImplicitProviders({
               agentDir,
               authStore: store,
-              config,
+              config: withHealthyProvider(config),
               env,
               onProviderCatalogOutcome: (outcome) => outcomes.push(outcome),
             }),
           emitOutcome: () => {
             emitProfileOutcome = true;
           },
-          plan: (source = {}, prepared = source) =>
-            planOpenClawModelsJson({
+          plan: (source = {}, prepared = source) => {
+            const configuredSource = withHealthyProvider(source);
+            const configuredPrepared =
+              prepared === source ? configuredSource : withHealthyProvider(prepared);
+            return planOpenClawModelsJson({
               context: {
-                cfg: source,
-                discoveryAuthConfig: prepared,
-                sourceConfigForSecrets: source,
+                cfg: configuredSource,
+                discoveryAuthConfig: configuredPrepared,
+                sourceConfigForSecrets: configuredSource,
                 agentDir,
                 env,
                 envFingerprint: env,
@@ -288,7 +301,8 @@ describe("models-config provider auth provenance", () => {
               authStore: store,
               existingRaw: "",
               existingParsed: null,
-            }),
+            });
+          },
           authorization,
           authResults,
           outcomes,
@@ -520,9 +534,12 @@ describe("models-config provider auth provenance", () => {
         try {
           await fixture.discover();
           await fixture.plan(configWithKey(configRef));
-          const expectedKey =
+          const expectedDeclaredKey =
             callback === "resolveProviderAuth" ? fixture.runtimeKey : "ambient-key";
-          expect(fixture.authorization).toEqual([`Bearer ${expectedKey}`, `Bearer ${expectedKey}`]);
+          expect(fixture.authorization).toEqual([
+            `Bearer ${fixture.runtimeKey}`,
+            `Bearer ${expectedDeclaredKey}`,
+          ]);
           expect(resolveProfile.mock.calls.map(([params]) => params.profileId)).not.toContain(
             "unrelated:oauth",
           );
@@ -543,7 +560,13 @@ describe("models-config provider auth provenance", () => {
         callback,
         async (fixture) => {
           fixture.emitOutcome();
-          await fixture.discover();
+          await fixture.discover({
+            models: {
+              providers: {
+                openai: { baseUrl: "https://catalog.example.test/v1", models: [] },
+              },
+            },
+          });
           expect(fixture.authorization).toEqual([`Bearer ${fixture.runtimeKey}`]);
           expect(fixture.outcomes).toEqual([
             { provider: "openai", profileId: fixture.profileId, status: "ready" },
@@ -811,6 +834,19 @@ describe("models-config provider auth provenance", () => {
     });
   });
 
+  const vllmConfigWithKey = (apiKey: string): OpenClawConfig => ({
+    models: {
+      providers: {
+        vllm: {
+          baseUrl: "http://127.0.0.1:8000/v1",
+          apiKey,
+          api: "openai-completions",
+          models: [],
+        },
+      },
+    },
+  });
+
   it("uses literal configured provider api keys for catalog discovery", () => {
     const auth = createProviderApiKeyResolver(
       {} as NodeJS.ProcessEnv,
@@ -818,18 +854,7 @@ describe("models-config provider auth provenance", () => {
         version: 1,
         profiles: {},
       },
-      {
-        models: {
-          providers: {
-            vllm: {
-              baseUrl: "http://127.0.0.1:8000/v1",
-              apiKey: "proof-key",
-              api: "openai-completions",
-              models: [],
-            },
-          },
-        },
-      },
+      vllmConfigWithKey("proof-key"),
     );
 
     expect(auth("vllm")).toEqual({
@@ -848,18 +873,7 @@ describe("models-config provider auth provenance", () => {
         version: 1,
         profiles: {},
       },
-      {
-        models: {
-          providers: {
-            vllm: {
-              baseUrl: "http://127.0.0.1:8000/v1",
-              apiKey: "${MY_VLLM_KEY}",
-              api: "openai-completions",
-              models: [],
-            },
-          },
-        },
-      },
+      vllmConfigWithKey("${MY_VLLM_KEY}"),
     );
 
     expect(auth("vllm")).toEqual({
@@ -876,18 +890,7 @@ describe("models-config provider auth provenance", () => {
         version: 1,
         profiles: {},
       },
-      {
-        models: {
-          providers: {
-            vllm: {
-              baseUrl: "http://127.0.0.1:8000/v1",
-              apiKey: "${MY_VLLM_KEY}",
-              api: "openai-completions",
-              models: [],
-            },
-          },
-        },
-      },
+      vllmConfigWithKey("${MY_VLLM_KEY}"),
     );
 
     expect(auth("vllm")).toEqual({
@@ -903,18 +906,7 @@ describe("models-config provider auth provenance", () => {
         version: 1,
         profiles: {},
       },
-      {
-        models: {
-          providers: {
-            vllm: {
-              baseUrl: "http://127.0.0.1:8000/v1",
-              apiKey: "VLLM_API_KEY",
-              api: "openai-completions",
-              models: [],
-            },
-          },
-        },
-      },
+      vllmConfigWithKey("VLLM_API_KEY"),
     );
 
     expect(auth("vllm")).toEqual({
@@ -930,18 +922,7 @@ describe("models-config provider auth provenance", () => {
         version: 1,
         profiles: {},
       },
-      {
-        models: {
-          providers: {
-            vllm: {
-              baseUrl: "http://127.0.0.1:8000/v1",
-              apiKey: "ALLCAPS_SAMPLE",
-              api: "openai-completions",
-              models: [],
-            },
-          },
-        },
-      },
+      vllmConfigWithKey("ALLCAPS_SAMPLE"),
     );
 
     expect(auth("vllm")).toEqual({

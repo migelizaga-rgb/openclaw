@@ -33,6 +33,7 @@ type DoctorConfigResult = {
   preservedLegacyRootKeys?: readonly string[];
   shouldRepairCronCodexModelRefsAfterConfigWrite?: boolean;
   retiredPhoneControlStateCleanupPending?: boolean;
+  providerUseBindingMigrationPending?: boolean;
   /** Store cleanup deferred until the repaired config reaches disk. */
   retiredAuthProfileCleanupPlans?: readonly RetiredAuthProfileCleanupPlan[];
   blockedCodexModelIdentities?: readonly string[];

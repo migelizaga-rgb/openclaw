@@ -851,6 +851,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
     const result = await compactEmbeddedAgentSessionDirect({
       ...wrappedCompactionArgs({ provider: "openai", model: "gpt-5.5" }),
       modelFallbacksOverride: ["anthropic/claude-fallback"],
+      config: { models: { providers: { anthropic: {} } } },
       runtimeAuthPlan,
       runtimePlan,
     });
@@ -2556,6 +2557,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       trigger: "overflow" as const,
       modelFallbacksOverride: ["demo/basic"],
       config: {
+        models: { providers: { demo: {} } },
         agents: {
           defaults: {
             compaction: { thinkingLevel: "inherit" as const },
@@ -2912,6 +2914,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
           forwardedAuthProfileId: "openai:test",
         },
         config: {
+          models: { providers: { "github-copilot": {} } },
           agents: {
             defaults:
               targetSource === "override"
@@ -3012,6 +3015,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
         details: { ok: true },
       });
     const config = {
+      models: { providers: { anthropic: {} } },
       agents: {
         defaults: {
           model: {
@@ -4367,7 +4371,11 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     });
 
     const result = await compactEmbeddedAgentSession(
-      wrappedCompactionArgs({ provider: "xai", model: "grok-4.5" }),
+      wrappedCompactionArgs({
+        provider: "xai",
+        model: "grok-4.5",
+        config: { models: { providers: { xai: {} } } },
+      }),
     );
 
     expect(result.compactionKind).toBe("server-endpoint");
@@ -4680,6 +4688,7 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     await compactEmbeddedAgentSession(
       wrappedCompactionArgs({
         config: {
+          models: { providers: { anthropic: {} } },
           agents: {
             defaults: {
               compaction: {
@@ -4717,6 +4726,7 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
       wrappedCompactionArgs({
         contextTokenBudget: 64_000,
         config: {
+          models: { providers: { anthropic: {} } },
           agents: {
             defaults: {
               compaction: {
