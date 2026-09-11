@@ -16,11 +16,7 @@ import {
   SecretSurfaceUnavailableError,
 } from "../secrets/runtime-degraded-state.js";
 import { mintSecretSentinel } from "../secrets/sentinel.js";
-import {
-  captureRuntimeAuthSharedOwner,
-  runtimeAuthProfileSnapshotSharesOwner,
-} from "./auth-profiles/runtime-snapshot-owner.js";
-import { listOwnedRuntimeAuthProfileStoreSnapshots } from "./auth-profiles/runtime-snapshots.js";
+import { captureRuntimeAuthProfileAccountIdentities } from "./auth-profiles/runtime-snapshots.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import * as authConfig from "./model-auth-provider-config.js";
 import { ProviderAuthError, type ResolvedProviderAuth } from "./model-auth-runtime-shared.js";
@@ -114,7 +110,6 @@ export function resolveStartupProviderUseBindingConflict(params: {
     return undefined;
   }
   const env = params.env ?? process.env;
-  const owner = captureRuntimeAuthSharedOwner(env);
   const persistedEntries = (store: AuthProfileStore | undefined) => {
     const persistedIds = new Set(store?.runtimePersistedProfileIds ?? []);
     return Object.entries(store?.profiles ?? {}).filter(([profileId]) =>
@@ -123,9 +118,9 @@ export function resolveStartupProviderUseBindingConflict(params: {
   };
   const profiles = [
     ...persistedEntries(params.store),
-    ...listOwnedRuntimeAuthProfileStoreSnapshots()
-      .filter((entry) => runtimeAuthProfileSnapshotSharesOwner(entry.owner, owner))
-      .flatMap((entry) => persistedEntries(entry.store)),
+    ...captureRuntimeAuthProfileAccountIdentities(env).profiles.map(
+      ({ profileId, provider }) => [profileId, { provider }] as const,
+    ),
   ];
   const lookup = {
     config,

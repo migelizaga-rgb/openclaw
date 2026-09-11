@@ -1,6 +1,7 @@
+import type { OpenClawConfig, ProviderRuntimeModel } from "openclaw/plugin-sdk/plugin-entry";
 // Anthropic Vertex tests cover index plugin behavior.
 import { registerSingleProviderPlugin } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { hasAnthropicVertexAvailableAuthMock } = vi.hoisted(() => ({
   hasAnthropicVertexAvailableAuthMock: vi.fn(),
@@ -25,6 +26,7 @@ describe("anthropic-vertex provider plugin", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   afterAll(() => {
@@ -82,6 +84,90 @@ describe("anthropic-vertex provider plugin", () => {
       provider.resolveSyntheticAuth?.({ config: {}, provider: "anthropic-vertex" }),
     ).toBeUndefined();
   });
+
+  it.each([
+    {
+      name: "service region",
+      region: "us-east5",
+      expected: "https://us-east5-aiplatform.googleapis.com",
+    },
+    {
+      name: "provider override",
+      region: "us-east5",
+      endpoint: "https://aiplatform.eu.rep.googleapis.com",
+      expected: "https://aiplatform.eu.rep.googleapis.com",
+    },
+    {
+      name: "model override",
+      region: "us-east5",
+      endpoint: "https://aiplatform.eu.rep.googleapis.com",
+      modelEndpoint: "https://aiplatform.googleapis.com",
+      expected: "https://aiplatform.googleapis.com",
+    },
+    {
+      name: "Sonnet 5 regional pricing",
+      region: "eu",
+      modelId: "claude-sonnet-5",
+      expected: "https://aiplatform.eu.rep.googleapis.com",
+    },
+  ])(
+    "normalizes a sterile static model using $name",
+    async ({ region, endpoint, modelEndpoint, modelId = "claude-sonnet-4-6", expected }) => {
+      vi.stubEnv("GOOGLE_CLOUD_LOCATION", region);
+      const provider = await registerSingleProviderPlugin(anthropicVertexPlugin);
+      const catalog = await anthropicVertexProviderDiscovery.staticCatalog.run({
+        config: {},
+        env: {},
+        resolveProviderApiKey: () => ({ apiKey: undefined }),
+        resolveProviderAuth: () => ({ apiKey: undefined, mode: "none", source: "none" }),
+      });
+      expect(catalog.provider.baseUrl).toBe("https://aiplatform.googleapis.com");
+      const row = catalog.provider.models.find((entry) => entry.id === modelId);
+      assert(row && typeof row.contextWindow === "number");
+      const model: ProviderRuntimeModel = {
+        ...row,
+        api: "anthropic-messages",
+        provider: "anthropic-vertex",
+        baseUrl: "https://aiplatform.googleapis.com",
+        contextWindow: row.contextWindow,
+        cost: {
+          input: row.cost.input,
+          output: row.cost.output,
+          cacheRead: row.cost.cacheRead,
+          cacheWrite: row.cost.cacheWrite,
+        },
+      };
+      const config: OpenClawConfig = {
+        models: {
+          providers: {
+            "anthropic-vertex": {
+              ...(endpoint ? { baseUrl: endpoint } : {}),
+              ...(modelEndpoint ? { models: [{ ...row, baseUrl: modelEndpoint }] } : {}),
+            },
+          },
+        },
+      };
+      const normalized =
+        provider.normalizeResolvedModel?.({
+          config,
+          provider: "anthropic-vertex",
+          modelId,
+          model,
+        }) ?? model;
+      expect(normalized.baseUrl).toBe(expected);
+      expect(normalized.id).toBe(modelId);
+      expect(normalized.api).toBe("anthropic-messages");
+      if (modelId === "claude-sonnet-5") {
+        expect(normalized.cost).toEqual({
+          input: 2.2,
+          output: 11,
+          cacheRead: 0.22,
+          cacheWrite: 2.75,
+        });
+        expect(normalized.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max" });
+      }
+    },
+  );
 
   it("returns raw discovery for the host to merge with explicit provider overrides", async () => {
     const provider = await registerSingleProviderPlugin(anthropicVertexPlugin);

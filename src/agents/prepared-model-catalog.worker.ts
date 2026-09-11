@@ -26,7 +26,10 @@ import { resolveAmbientAgentCredentialsForDiscovery } from "./agent-auth-discove
 import { overlayExternalAuthProfiles } from "./auth-profiles/external-auth-runtime.js";
 import { listExternalCliSyncProviderIds } from "./auth-profiles/external-cli-sync.js";
 import { mergeRuntimeExternalProfileReferences } from "./auth-profiles/runtime-external-profile-references.js";
-import { replaceRuntimeAuthProfileStoreSnapshots } from "./auth-profiles/runtime-snapshots.js";
+import {
+  replaceRuntimeAuthProfileStoreSnapshots,
+  withRuntimeAuthProfileAccountIdentities,
+} from "./auth-profiles/runtime-snapshots.js";
 import { loadAuthProfileStoreWithoutExternalProfiles } from "./auth-profiles/store-runtime.js";
 import { preserveResolvedSecretBackedCredentials } from "./auth-profiles/store.js";
 import { prepareModelCatalogAuthLabels } from "./model-catalog-auth-labels.js";
@@ -155,10 +158,20 @@ async function prepareWorkerGeneration(value: PreparedModelCatalogWorkerInput) {
   return { agentFacts, pluginGeneration: prepared.pluginGeneration, reconstructedFingerprint };
 }
 
-export async function runPreparedModelCatalogWorkerRequest(
+export function runPreparedModelCatalogWorkerRequest(
   value: PreparedModelCatalogWorkerInput,
   request: PreparedModelWorkerRequest,
   prepareGeneration = () => prepareWorkerGeneration(value),
+): Promise<PreparedModelWorkerResult> {
+  return withRuntimeAuthProfileAccountIdentities(request.providerUseBindingAccounts, () =>
+    executePreparedModelCatalogWorkerRequest(value, request, prepareGeneration),
+  );
+}
+
+async function executePreparedModelCatalogWorkerRequest(
+  value: PreparedModelCatalogWorkerInput,
+  request: PreparedModelWorkerRequest,
+  prepareGeneration: () => ReturnType<typeof prepareWorkerGeneration>,
 ): Promise<PreparedModelWorkerResult> {
   try {
     restorePreparedSyntheticAuthFacts(value.input.config, request.syntheticAuth, {

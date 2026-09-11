@@ -110,5 +110,27 @@ describe("prepared model catalog worker input", () => {
         syntheticAuth: [{ ...request.syntheticAuth[0]!, result: null }],
       }),
     ).not.toBe(fingerprint);
+    const withAccounts = {
+      ...request,
+      providerUseBindingAccounts: {
+        owner: {
+          kind: "resolved" as const,
+          location: "state-db" as const,
+          sharedDatabasePath: "/tmp/shared/openclaw.sqlite",
+        },
+        profiles: [{ profileId: "saved:other", provider: "shared" }],
+      },
+    };
+    const accountFingerprint = fingerprintPreparedModelWorkerRequest(cloned, withAccounts);
+    expect(accountFingerprint).not.toBe(fingerprint);
+    expect(fingerprintPreparedModelWorkerRequest(cloned, structuredClone(withAccounts))).toBe(
+      accountFingerprint,
+    );
+    expect(
+      fingerprintPreparedModelWorkerRequest(cloned, {
+        ...withAccounts,
+        providerUseBindingAccounts: { ...withAccounts.providerUseBindingAccounts, profiles: [] },
+      }),
+    ).not.toBe(accountFingerprint);
   });
 });

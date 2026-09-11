@@ -17,7 +17,12 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
-import { setRuntimeAuthProfileStoreSnapshot } from "../auth-profiles/runtime-snapshots.js";
+import {
+  captureRuntimeAuthProfileAccountIdentities,
+  replaceRuntimeAuthProfileStoreSnapshots,
+  setRuntimeAuthProfileStoreSnapshot,
+  withRuntimeAuthProfileAccountIdentities,
+} from "../auth-profiles/runtime-snapshots.js";
 import { ensureAuthProfileStore } from "../auth-profiles/store-runtime.js";
 import { MODELS_CONFIG_IMPLICIT_ENV_VARS } from "../models-config.e2e-harness.js";
 import { planOpenClawModelsJsonSource } from "../models-config.js";
@@ -155,15 +160,20 @@ describe("catalog destination credential admission", () => {
       return { providers: { [id]: providerConfig(id) } };
     });
     const outcomes: Array<{ provider: string; status: string }> = [];
-    const result = await resolveImplicitProviders({
-      config,
-      env,
-      authStore: store,
-      agentDir: state.agentDir(),
-      pluginMetadataSnapshot: metadata,
-      providerDiscoveryProviderIds: [first, last, publicId],
-      onProviderCatalogOutcome: (outcome) => outcomes.push(outcome),
-    });
+    const result = await withPluginMetadataSnapshotScope(
+      metadata,
+      () =>
+        resolveImplicitProviders({
+          config,
+          env,
+          authStore: store,
+          agentDir: state.agentDir(),
+          pluginMetadataSnapshot: metadata,
+          providerDiscoveryProviderIds: [first, last, publicId],
+          onProviderCatalogOutcome: (outcome) => outcomes.push(outcome),
+        }),
+      { config, env },
+    );
     expect(result?.[first]).toBeUndefined();
     expect(result?.[last]?.models.map((model) => model.id)).toEqual([last]);
     expect(result?.[publicId]?.models.map((model) => model.id)).toEqual(["public-model"]);
@@ -173,7 +183,12 @@ describe("catalog destination credential admission", () => {
     ]);
   });
 
-  it.each(["implicit", "provider projection", "runtime source projection"] as const)(
+  it.each([
+    "implicit",
+    "provider projection",
+    "runtime source projection",
+    "isolated other-agent",
+  ] as const)(
     "does not refresh an authenticated startup catalog after a saved account conflicts through %s",
     async (entryPoint) => {
       const provider = "fixture-startup";
@@ -185,6 +200,14 @@ describe("catalog destination credential admission", () => {
       const config = resolveConfigProviderUseBindings(source);
       const store = ensureAuthProfileStore(state.agentDir(), { config, syncExternalCli: false });
       setRuntimeAuthProfileStoreSnapshot(store, state.agentDir());
+      const isolated = entryPoint === "isolated other-agent";
+      if (isolated) {
+        const other = ensureAuthProfileStore(state.agentDir("other"), {
+          config,
+          syncExternalCli: false,
+        });
+        setRuntimeAuthProfileStoreSnapshot(other, state.agentDir("other"));
+      }
       const metadata = createPluginMetadataSnapshotFixture({
         plugins: [
           {
@@ -210,7 +233,7 @@ describe("catalog destination credential admission", () => {
           },
         };
       });
-      if (entryPoint === "runtime source projection") {
+      if (entryPoint === "runtime source projection" || isolated) {
         setRuntimeConfigSnapshot(config, source);
       }
       const outcomes: Array<{ provider: string; status: string }> = [];
@@ -223,7 +246,7 @@ describe("catalog destination credential admission", () => {
           outcomes.push(outcome),
       };
       const discover = () =>
-        entryPoint === "runtime source projection"
+        entryPoint === "runtime source projection" || isolated
           ? planOpenClawModelsJsonSource(
               cloneConfigWithResolutionFacts(config),
               state.agentDir(),
@@ -250,24 +273,40 @@ describe("catalog destination credential admission", () => {
       if (!retained) {
         throw new Error("Expected the initial catalog owner to run");
       }
-      await state.writeAuthProfiles({
-        version: 1,
-        profiles: {
-          "fixture-startup:late": { type: "api_key", provider, key: "saved-account" },
+      await state.writeAuthProfiles(
+        {
+          version: 1,
+          profiles: {
+            "fixture-startup:late": { type: "api_key", provider, key: "saved-account" },
+          },
         },
-      });
+        isolated ? "other" : "main",
+      );
       expect(() => retained.resolveProviderApiKey(provider)).toThrow(
         "conflicts with saved profile",
       );
       expect(() => retained.resolveProviderAuth(provider)).toThrow("conflicts with saved profile");
       mocks.runProviderCatalog.mockClear();
       outcomes.length = 0;
-      const refreshed = await discover();
+      const accounts = captureRuntimeAuthProfileAccountIdentities(env);
+      if (isolated) {
+        expect(accounts.profiles).toEqual([{ profileId: "fixture-startup:late", provider }]);
+        replaceRuntimeAuthProfileStoreSnapshots([{ agentDir: state.agentDir(), store }]);
+        expect(captureRuntimeAuthProfileAccountIdentities(env).profiles).toEqual([]);
+      }
+      const refreshed = await withRuntimeAuthProfileAccountIdentities(
+        isolated ? structuredClone(accounts) : undefined,
+        discover,
+      );
       if (entryPoint === "implicit") {
         expect(refreshed).toEqual({});
       }
       expect(mocks.runProviderCatalog).not.toHaveBeenCalled();
       expect(outcomes).toEqual([{ provider, status: "unavailable" }]);
+      if (isolated) {
+        expect(captureRuntimeAuthProfileAccountIdentities(env).profiles).toEqual([]);
+        expect(store.profiles).toEqual({});
+      }
       expect(source).toEqual({});
     },
   );

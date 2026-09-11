@@ -34,8 +34,8 @@ export default definePluginEntry({
       },
       resolveConfigApiKey: ({ env }) => resolveAnthropicVertexConfigApiKey(env),
       ...buildProviderReplayFamilyHooks({ family: "native-anthropic-by-model" }),
-      normalizeResolvedModel: ({ modelId, model }) =>
-        normalizeAnthropicVertexResolvedModel(modelId, model),
+      normalizeResolvedModel: ({ modelId, model, config }) =>
+        normalizeAnthropicVertexResolvedModel(modelId, model, config),
       resolveThinkingProfile: ({ modelId, params }) =>
         resolveClaudeThinkingProfile(modelId, params, { includeNativeMax: true }),
       resolveSyntheticAuth: () => {

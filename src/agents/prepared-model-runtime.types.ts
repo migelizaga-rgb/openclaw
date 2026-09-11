@@ -217,6 +217,7 @@ export type PreparedModelRuntimeOwner = {
   input: PreparedModelRuntimeInput;
   catalogOwner: PublishedModelCatalogOwnerCandidate["catalogOwner"];
   environmentFingerprint: string;
+  providerUseBindingAccounts?: import("./auth-profiles/runtime-snapshots.js").RuntimeAuthProfileAccountIdentities;
   catalogMode: PreparedModelRuntimeCatalogMode;
   provenance: "configured" | "standalone" | "explicit" | "run" | "ephemeral";
   generation: number;

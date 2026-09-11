@@ -1,8 +1,10 @@
 import path from "node:path";
 import { toStringifiedError } from "@openclaw/normalization-core/error-coercion";
+import { getConfigProviderUseBindings } from "../config/resolution-facts.js";
 import { hashRuntimeConfigValue } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
+import { captureRuntimeAuthProfileAccountIdentities } from "./auth-profiles/runtime-snapshots.js";
 import {
   resolveSelectedAgentHarnessRuntime,
   type AgentHarnessPluginSelection,
@@ -79,6 +81,10 @@ export function prepareModelRuntimeOwner(
     input,
     catalogOwner: preparePublishedModelCatalogOwnerIdentity(input),
     environmentFingerprint: effectiveEnvironmentFingerprint(input),
+    providerUseBindingAccounts:
+      Object.keys(getConfigProviderUseBindings(input.config)).length > 0
+        ? captureRuntimeAuthProfileAccountIdentities(input.env)
+        : undefined,
     catalogMode,
     provenance,
   });

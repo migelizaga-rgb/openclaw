@@ -1,4 +1,6 @@
+import { isDeepStrictEqual } from "node:util";
 import { createDeferredCore, type Deferred } from "../shared/deferred.js";
+import { captureRuntimeAuthProfileAccountIdentities } from "./auth-profiles/runtime-snapshots.js";
 import { resolveLegacyInheritedAuthDir } from "./legacy-inherited-auth-dir.js";
 import { PreparedModelRuntimePublicationSupersededError } from "./prepared-model-runtime.errors.js";
 import {
@@ -312,7 +314,13 @@ export function invalidatePreparedModelRuntimeOwnersForAuthMutation(
   const invalidatedOwners: PreparedModelRuntimeOwner[] = [];
   const invalidatedConfiguredAgentIds = new Set<string>();
   for (const owner of owners.values()) {
+    const accounts = owner.providerUseBindingAccounts
+      ? captureRuntimeAuthProfileAccountIdentities(owner.input.env)
+      : undefined;
+    const bindingAccountsChanged = !isDeepStrictEqual(owner.providerUseBindingAccounts, accounts);
+    owner.providerUseBindingAccounts = accounts;
     if (
+      !bindingAccountsChanged &&
       !normalizedEvent.affectsInheritedStores &&
       owner.input.agentDir !== normalizedEvent.agentDir &&
       owner.input.inheritedAuthDir !== normalizedEvent.agentDir
@@ -323,7 +331,7 @@ export function invalidatePreparedModelRuntimeOwnersForAuthMutation(
     owner.generation += 1;
     owner.needsRefresh = true;
     owner.refreshError = staleError;
-    if (normalizedEvent.profileSetChanged) {
+    if (normalizedEvent.profileSetChanged || bindingAccountsChanged) {
       owner.catalogStale = true;
     }
     if (owner.provenance === "configured" && owner.input.agentId) {

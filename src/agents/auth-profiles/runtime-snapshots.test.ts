@@ -15,6 +15,7 @@ import {
   revokeRuntimeAuthMaterializations,
 } from "./runtime-materializations.js";
 import {
+  captureRuntimeAuthProfileAccountIdentities,
   clearRuntimeAuthProfileStoreSnapshotCore,
   clearRuntimeAuthProfileStoreSnapshots,
   getPreparedRuntimeAuthProfileStoreSnapshotCore,
@@ -25,6 +26,7 @@ import {
   registerRuntimeAuthProfileStoreMutationListener,
   replaceRuntimeAuthProfileStoreSnapshots,
   setRuntimeAuthProfileStoreSnapshot,
+  withRuntimeAuthProfileAccountIdentities,
 } from "./runtime-snapshots.js";
 import { testing } from "./runtime-snapshots.test-support.js";
 import type { AuthProfileStore, RuntimeAuthProfileStore } from "./types.js";
@@ -70,6 +72,32 @@ function expectOpenAICodexSnapshotCredential(
 }
 
 describe("runtime auth profile snapshots", () => {
+  it("scopes transported saved-account identities without granting credentials or crossing shared owners", async () => {
+    clearRuntimeAuthProfileStoreSnapshots();
+    const owner = captureRuntimeAuthProfileAccountIdentities().owner;
+    const accounts = { owner, profiles: [{ profileId: "saved:other", provider: "fixture" }] };
+    await withRuntimeAuthProfileAccountIdentities(accounts, async () => {
+      await Promise.resolve();
+      expect(captureRuntimeAuthProfileAccountIdentities().profiles).toEqual(accounts.profiles);
+      expect(getRuntimeAuthProfileStoreSnapshotCore()).toBeUndefined();
+      expect(listOwnedRuntimeAuthProfileStoreSnapshots()).toEqual([]);
+    });
+    expect(captureRuntimeAuthProfileAccountIdentities().profiles).toEqual([]);
+    withRuntimeAuthProfileAccountIdentities(
+      {
+        ...accounts,
+        owner: {
+          kind: "resolved",
+          location: "state-db",
+          sharedDatabasePath: "/other-owner/openclaw.sqlite",
+        },
+      },
+      () => {
+        expect(captureRuntimeAuthProfileAccountIdentities().profiles).toEqual([]);
+      },
+    );
+  });
+
   it("carries the canonical database identity through snapshot enumeration", () => {
     const databasePath = "/tmp/openclaw-auth-runtime-enumeration/custom.sqlite";
     const store = createStore("enumerated");

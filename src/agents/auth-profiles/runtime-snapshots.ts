@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 /**
  * Process-local auth profile snapshots used by prepared runtimes and tests.
@@ -42,6 +43,50 @@ type OwnedRuntimeSnapshot = {
   legacyCandidates?: RuntimeAuthProfileLegacyCandidates;
 };
 const runtimeAuthStoreSnapshots = new Map<string, OwnedRuntimeSnapshot>();
+
+export type RuntimeAuthProfileAccountIdentities = {
+  owner: RuntimeAuthSharedOwner;
+  profiles: readonly { profileId: string; provider: string }[];
+};
+const scopedAccountIdentities = new AsyncLocalStorage<
+  RuntimeAuthProfileAccountIdentities | undefined
+>();
+
+/** Transfers denial evidence across an isolated operation without granting credential access. */
+export function withRuntimeAuthProfileAccountIdentities<T>(
+  identities: RuntimeAuthProfileAccountIdentities | undefined,
+  run: () => T,
+): T {
+  return scopedAccountIdentities.run(identities, run);
+}
+
+/** Captures saved-account identity only; scoped evidence cannot supply a credential. */
+export function captureRuntimeAuthProfileAccountIdentities(
+  env: NodeJS.ProcessEnv = process.env,
+): RuntimeAuthProfileAccountIdentities {
+  const owner = captureRuntimeAuthSharedOwner(env);
+  const inherited = scopedAccountIdentities.getStore();
+  return {
+    owner,
+    profiles: [
+      ...(inherited && runtimeAuthProfileSnapshotSharesOwner(inherited.owner, owner)
+        ? inherited.profiles
+        : []),
+      ...[...runtimeAuthStoreSnapshots.values()].flatMap((entry) =>
+        runtimeAuthProfileSnapshotSharesOwner(entry.owner, owner)
+          ? (entry.store.runtimePersistedProfileIds ?? []).flatMap((profileId) => {
+              const profile = entry.store.profiles[profileId];
+              return profile ? [{ profileId, provider: profile.provider }] : [];
+            })
+          : [],
+      ),
+    ].toSorted(
+      (left, right) =>
+        left.profileId.localeCompare(right.profileId) ||
+        left.provider.localeCompare(right.provider),
+    ),
+  };
+}
 
 function runtimeStoreEntries(): Array<[string, RuntimeAuthProfileStore]> {
   return Array.from(runtimeAuthStoreSnapshots, ([key, entry]) => [key, entry.store]);
