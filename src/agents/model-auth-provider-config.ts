@@ -722,8 +722,7 @@ function resolveEnvSourceLabel(params: {
   label: string;
 }): string {
   const shellApplied = params.envVars.some((envVar) => params.applied.has(envVar));
-  const prefix = shellApplied ? "shell env: " : "env: ";
-  return `${prefix}${params.label}`;
+  return `${shellApplied ? "shell env" : "env"}: ${params.label}`;
 }
 
 export function resolveAwsSdkAuthInfo(): { mode: "aws-sdk"; source: string } {

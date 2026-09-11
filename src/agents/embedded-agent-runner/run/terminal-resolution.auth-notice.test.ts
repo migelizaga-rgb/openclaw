@@ -80,7 +80,7 @@ describe("successful terminal account notice", () => {
     expect(snapshot.isCurrent()).toBe(false);
     expect(result).toMatchObject({
       action: "complete",
-      result: { payloads: [...input.payloadsWithToolMedia, { text: notice }] },
+      result: { payloads: [{ text: "The task is complete." }, { text: notice }] },
     });
     expect(
       runtimeAuth.getPreparedModelRuntimePreferredAuthSource(snapshot, "openai", input.modelId),
