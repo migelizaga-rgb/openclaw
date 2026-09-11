@@ -76,8 +76,10 @@ works with `--yes` and `--json`; it does not change system Node or shell setting
 After a version-manager switch, a restarting update keeps the invoking OpenClaw
 installation as its target and rebinds its owned Gateway service to that
 installation. This also applies when the CLI package already matches the requested
-version. `--no-restart` does not rebind the service. External schedulers and pinned
-crontab paths remain operator-managed.
+version. If the managed service definition cannot be changed, the updater keeps
+the existing service installation as its target instead; it does not rebind the
+service to the invoking CLI. `--no-restart` also does not rebind the service.
+External schedulers and pinned crontab paths remain operator-managed.
 
 ## Install Node
 

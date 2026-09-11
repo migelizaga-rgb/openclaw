@@ -117,7 +117,20 @@ export async function resolveUpdatedNodeRuntime(
   const status = installCommand
     ? await installCommand(command, args, env)
     : spawnSync(command, args, { stdio: "inherit", env }).status;
-  if (status !== 0 || !isUsableNode(nodePath, { env, trustedRoot: recoveryRoot, acceptVersion })) {
+  // The POSIX installer publishes a versioned directory by repointing tools/node.
+  // Re-resolve that published alias through the same trust checks before probing it.
+  const installedRoot =
+    status === 0
+      ? resolveRecoveryPath(path.join(prefix, "tools", "node"), undefined, {
+          trustedRoot: recoveryRoot,
+        })
+      : null;
+  const installedPath =
+    installedRoot && path.join(installedRoot, ...(windows ? ["node.exe"] : ["bin", "node"]));
+  if (
+    !installedPath ||
+    !isUsableNode(installedPath, { env, trustedRoot: recoveryRoot, acceptVersion })
+  ) {
     if (!installCommand) {
       process.stderr.write(
         "openclaw: Node.js update failed; install a compatible Node.js manually.\n",
@@ -128,5 +141,5 @@ export async function resolveUpdatedNodeRuntime(
   if (!installCommand) {
     process.stderr.write("openclaw: Node.js updated. Retrying your command.\n");
   }
-  return nodePath;
+  return installedPath;
 }

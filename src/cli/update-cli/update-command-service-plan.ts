@@ -9,6 +9,7 @@ import { createConfigIO } from "../../config/io.js";
 import { resolveGatewayPort } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveNodeRuntimeInfo } from "../../daemon/runtime-paths.js";
+import { mergeGatewayServiceEnv } from "../../daemon/service-env-merge.js";
 import { summarizeGatewayServiceLayout } from "../../daemon/service-layout.js";
 import type { GatewayServiceCommandConfig } from "../../daemon/service-types.js";
 import { resolveGatewayService } from "../../daemon/service.js";
@@ -248,7 +249,8 @@ export async function resolveManagedServicePackageUpdatePlan(params: {
   }
   // Root and runtime planning share one effective command; mutation and restart
   // revalidate independently so this snapshot cannot grant later service authority.
-  const command = await resolveGatewayService()
+  const service = resolveGatewayService();
+  const command = await service
     .readCommand(process.env, { requireEffective: true, requireLoaded: true })
     .catch(() => null);
   const layout = await summarizeGatewayServiceLayout(command);
@@ -260,8 +262,21 @@ export async function resolveManagedServicePackageUpdatePlan(params: {
     layout.entrypointSourceCheckout !== true &&
     (await tryRealpathOrResolve(params.root)) !== layout.packageRootReal
   ) {
+    const capability =
+      params.rebind === false
+        ? undefined
+        : await service
+            .readDefinitionMutationCapability?.({
+              env: process.env,
+              environment: mergeGatewayServiceEnv(process.env, command),
+              requireLoaded: true,
+            })
+            .catch(() => ({ kind: "unknown", reason: "inspection-failed" }) as const);
+    // A protected definition can still activate an updated package at its current root.
+    // Preserve that existing path; this observation does not grant later mutation authority.
+    const canRebind = params.rebind !== false && (capability?.kind ?? "writable") === "writable";
     return {
-      ...(params.rebind === false
+      ...(!canRebind
         ? { rootRedirect: { root: serviceRoot, previousRoot: params.root } }
         : { rootRedirect: null, serviceRoot }),
       ...(serviceNode ? { nodeRunner: serviceNode } : {}),
