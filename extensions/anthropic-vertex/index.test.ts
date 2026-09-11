@@ -124,8 +124,11 @@ describe("anthropic-vertex provider plugin", () => {
       expect(catalog.provider.baseUrl).toBe("https://aiplatform.googleapis.com");
       const row = catalog.provider.models.find((entry) => entry.id === modelId);
       assert(row && typeof row.contextWindow === "number");
+      const input = row.input;
+      assert(input.every((value) => value === "text" || value === "image"));
       const model: ProviderRuntimeModel = {
         ...row,
+        input,
         api: "anthropic-messages",
         provider: "anthropic-vertex",
         baseUrl: "https://aiplatform.googleapis.com",
@@ -137,16 +140,18 @@ describe("anthropic-vertex provider plugin", () => {
           cacheWrite: row.cost.cacheWrite,
         },
       };
-      const config: OpenClawConfig = {
-        models: {
-          providers: {
-            "anthropic-vertex": {
-              ...(endpoint ? { baseUrl: endpoint } : {}),
-              ...(modelEndpoint ? { models: [{ ...row, baseUrl: modelEndpoint }] } : {}),
+      const config: OpenClawConfig = endpoint
+        ? {
+            models: {
+              providers: {
+                "anthropic-vertex": {
+                  baseUrl: endpoint,
+                  models: modelEndpoint ? [{ ...row, baseUrl: modelEndpoint }] : [],
+                },
+              },
             },
-          },
-        },
-      };
+          }
+        : {};
       const normalized =
         provider.normalizeResolvedModel?.({
           config,
