@@ -1430,6 +1430,7 @@ vi.mock("./doctor-config-analysis.js", async () => {
     noteImplicitFallbackClobberWarnings: noteImplicitFallbackClobberWarningsMock,
     noteIncludeConfinementWarning: vi.fn(),
     noteOpencodeProviderOverrides: vi.fn(),
+    noteProviderEnvOwnershipConflicts: vi.fn(),
     noteMcpOriginWarning: vi.fn(),
     noteSandboxOriginProxyWarning: vi.fn(),
     resolveConfigPathTarget,
