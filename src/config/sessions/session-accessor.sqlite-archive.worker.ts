@@ -1,10 +1,12 @@
 /** Worker entrypoint for SQLite transcript archive materialization off the gateway event loop. */
 import { randomUUID } from "node:crypto";
+import { on } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { isDeepStrictEqual } from "node:util";
 import { parentPort, workerData } from "node:worker_threads";
 import zlib from "node:zlib";
 import {
@@ -12,9 +14,14 @@ import {
   getNodeSqliteKysely,
   iterateSqliteQuerySync,
 } from "../../infra/kysely-sync.js";
+import {
+  createOpenClawAgentDatabaseClaim,
+  type OpenClawAgentDatabaseClaim,
+} from "../../state/openclaw-agent-db-identity.js";
 import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "../../state/openclaw-agent-db.generated.js";
 import {
+  borrowOpenClawAgentDatabase,
   settleOpenClawAgentDatabaseWorkerClose,
   withOpenClawAgentDatabaseAdmission,
   type OpenClawAgentDatabaseWorkerCloseResult,
@@ -25,27 +32,29 @@ import {
   MAX_MATERIALIZED_ARCHIVE_BATCH_BYTES,
   publishEncodedSessionTranscriptArchive,
   resolveSqliteTranscriptArchivePath,
-  type TranscriptArchivePublishPlan,
-  type TranscriptArchivePublishResult,
-  type TranscriptArchivePublishWorkerMessage,
-  type TranscriptArchiveWorkerMessage,
-  type TranscriptArchiveWorkerPlan,
-  type TranscriptArchiveWorkerResult,
+} from "./session-accessor.sqlite-archive-artifact.js";
+import type {
+  TranscriptArchivePublishPlan,
+  TranscriptArchivePublishResult,
+  TranscriptArchivePublishWorkerMessage,
+  TranscriptArchiveWorkerMessage,
+  TranscriptArchiveWorkerPlan,
+  TranscriptArchiveWorkerResult,
 } from "./session-accessor.sqlite-archive.js";
 import {
   readSessionStateDeleteSnapshot,
   sqliteSessionStateDeleteSnapshotsEqual,
 } from "./session-accessor.sqlite-delete-snapshot.js";
 import type { SessionStateDeleteSnapshot } from "./session-accessor.sqlite-delete-snapshot.types.js";
+import type { SqliteSessionReclamationPlan } from "./session-accessor.sqlite-lifecycle-types.js";
 import {
   markSqliteReclamationSettled,
   waitForSqliteReclamationCommit,
 } from "./session-accessor.sqlite-reclamation-commit.js";
-import {
-  reclaimSqliteSessionInTransaction,
-  type SqliteSessionReclamationWorkerData,
-  type SqliteSessionReclamationWorkerResult,
-} from "./session-accessor.sqlite-reclamation.js";
+import type {
+  SqliteReclamationWorkerRequest,
+  SqliteReclamationWorkerMessage,
+} from "./session-accessor.sqlite-reclamation-worker.js";
 
 type TranscriptArchiveDatabase = Pick<
   OpenClawAgentKyselyDatabase,
@@ -445,75 +454,131 @@ function runPublishWorkerPort(
 
 async function runReclamationWorkerPort(
   port: NonNullable<typeof parentPort>,
-  data: SqliteSessionReclamationWorkerData,
+  databaseOptions: SqliteSessionReclamationPlan["databaseOptions"],
 ): Promise<void> {
-  let result: ReturnType<typeof reclaimSqliteSessionInTransaction>;
-  const commitGate = data.commitGate;
-  let admissionId = 0;
-  let finalAdmission = false;
-  const withAdmission: OpenClawAgentDatabaseWriteAdmission = async (run) => {
-    const requestedId = ++admissionId;
-    const allowed = await new Promise<boolean>((resolve, reject) => {
-      const receive = (message: { type: string; admissionId: number; allowed: boolean }) => {
-        cleanup();
-        if (message.type !== "admission" || message.admissionId !== requestedId) {
-          reject(new Error("SQLite reclamation Worker received invalid write admission"));
-          return;
-        }
-        resolve(message.allowed);
-      };
-      const closed = () => {
-        cleanup();
-        reject(new Error("SQLite reclamation parent closed during database admission"));
-      };
-      const cleanup = () => {
-        port.off("message", receive);
-        port.off("close", closed);
-      };
-      port.on("message", receive);
-      port.once("close", closed);
-      port.postMessage({ type: "admission-request", admissionId: requestedId });
-    });
-    const value = await run(() => {
-      if (!allowed) {
-        throw new Error("SQLite reclamation database admission was revoked");
-      }
-    });
-    if (!finalAdmission) {
-      port.postMessage({ type: "admission-release", admissionId: requestedId });
-    }
-    return value;
-  };
+  // Archive-only operations never load the write/lifecycle graph.
+  const { reclaimSqliteSessionInTransaction } =
+    await import("./session-accessor.sqlite-reclamation.js");
+  let claim: OpenClawAgentDatabaseClaim | undefined;
+  let commitGate: SharedArrayBuffer | undefined;
+  let operationId = 0;
   try {
-    result = await withOpenClawAgentDatabaseAdmission(
-      data.plan.databaseOptions,
-      withAdmission,
-      () => {
-        finalAdmission = true;
-        let transactionDatabase: DatabaseSync | undefined;
-        try {
-          return reclaimSqliteSessionInTransaction(data.plan, {
-            onCommit: commitGate
-              ? (database) => {
-                  transactionDatabase = database.db;
-                  waitForSqliteReclamationCommit(commitGate, () =>
-                    port.postMessage({ type: "commit-request" }),
-                  );
-                }
-              : undefined,
+    for await (const [message] of on(port, "message")) {
+      // SAFETY: only the typed private parent sends on this port.
+      const request = message as
+        | SqliteReclamationWorkerRequest
+        | { type: "close" }
+        | { type: "admission" };
+      if (request.type === "close") {
+        break;
+      }
+      // Admission replies also reach the iterator; the active request consumes them below.
+      if (request.type === "admission") {
+        continue;
+      }
+      commitGate = request.commitGate;
+      if (
+        request.operationId !== ++operationId ||
+        !isDeepStrictEqual(request.plan.databaseOptions, databaseOptions)
+      ) {
+        throw new Error("SQLite session reclamation database owner is no longer current");
+      }
+      claim?.assertCurrent();
+      let admissionId = 0;
+      let finalAdmission = false;
+      const withAdmission: OpenClawAgentDatabaseWriteAdmission = async (run) => {
+        const requestedId = ++admissionId;
+        const allowed = await new Promise<boolean>((resolve, reject) => {
+          const receive = (admissionMessage: {
+            type: string;
+            operationId: number;
+            admissionId: number;
+            allowed: boolean;
+          }) => {
+            cleanup();
+            if (
+              admissionMessage.type !== "admission" ||
+              admissionMessage.operationId !== request.operationId ||
+              admissionMessage.admissionId !== requestedId
+            ) {
+              reject(new Error("SQLite reclamation Worker received invalid write admission"));
+              return;
+            }
+            resolve(admissionMessage.allowed);
+          };
+          const closed = () => {
+            cleanup();
+            reject(new Error("SQLite reclamation parent closed during database admission"));
+          };
+          const cleanup = () => {
+            port.off("message", receive);
+            port.off("close", closed);
+          };
+          port.on("message", receive);
+          port.once("close", closed);
+          port.postMessage({
+            type: "admission-request",
+            operationId: request.operationId,
+            admissionId: requestedId,
           });
-        } finally {
-          if (
-            transactionDatabase &&
-            (!transactionDatabase.isOpen || !transactionDatabase.isTransaction)
-          ) {
-            markSqliteReclamationSettled(commitGate);
+        });
+        const value = await run(() => {
+          if (!allowed) {
+            throw new Error("SQLite reclamation database admission was revoked");
           }
+        });
+        if (!finalAdmission) {
+          port.postMessage({
+            type: "admission-release",
+            operationId: request.operationId,
+            admissionId: requestedId,
+          });
         }
-      },
-    );
+        return value;
+      };
+      const result = await withOpenClawAgentDatabaseAdmission(
+        databaseOptions,
+        withAdmission,
+        (database) => {
+          finalAdmission = true;
+          if (!claim) {
+            const borrowed = borrowOpenClawAgentDatabase(databaseOptions);
+            claim = createOpenClawAgentDatabaseClaim(database, borrowed.release);
+          }
+          claim.assertCurrent();
+          if (claim.database.db !== database.db) {
+            throw new Error("SQLite session reclamation database owner is no longer current");
+          }
+          try {
+            return reclaimSqliteSessionInTransaction(request.plan, {
+              beforeMutation: claim.assertCurrent,
+              onCommit: () =>
+                waitForSqliteReclamationCommit(request.commitGate, () =>
+                  port.postMessage({
+                    type: "commit-request",
+                    operationId,
+                  } satisfies SqliteReclamationWorkerMessage),
+                ),
+            });
+          } finally {
+            if (!database.db.isOpen || !database.db.isTransaction) {
+              markSqliteReclamationSettled(commitGate);
+            }
+          }
+        },
+      );
+      // Settlement releases this victim's admission, not the sweep's validated connection.
+      request.plan.materializedPlans.length = 0;
+      port.postMessage({
+        type: "reclaimed",
+        operationId,
+        result,
+      } satisfies SqliteReclamationWorkerMessage);
+      commitGate = undefined;
+    }
   } catch (error) {
-    const cleanup = await settleReclamationDatabase(data.plan.databaseOptions.path);
+    const cleanup = await settleReclamationDatabase(databaseOptions.path);
+    port.postMessage({ type: "closed", ...cleanup } satisfies SqliteReclamationWorkerMessage);
     if (cleanup.settled) {
       markSqliteReclamationSettled(commitGate);
     } else {
@@ -524,14 +589,11 @@ async function runReclamationWorkerPort(
       );
     }
     throw error;
+  } finally {
+    claim?.release();
   }
-  const cleanup = await settleReclamationDatabase(data.plan.databaseOptions.path);
-  const workerResult: SqliteSessionReclamationWorkerResult = {
-    result,
-    ...(cleanup.cleanupWarnings.length > 0 ? { cleanupWarnings: cleanup.cleanupWarnings } : {}),
-    ...(!cleanup.settled ? { cleanupIncomplete: true } : {}),
-  };
-  port.postMessage({ type: "reclaimed", results: [workerResult] });
+  const cleanup = await settleReclamationDatabase(databaseOptions.path);
+  port.postMessage({ type: "closed", ...cleanup } satisfies SqliteReclamationWorkerMessage);
   port.close();
 }
 
@@ -553,8 +615,12 @@ if (isSqliteTranscriptArchiveWorkerData(workerData)) {
     }
     runPublishWorkerPort(parentPort, plans);
   } else if (operation === "reclaim") {
-    // SAFETY: the parent creates this internal structured-clone payload from the typed plan.
-    await runReclamationWorkerPort(parentPort, workerData as SqliteSessionReclamationWorkerData);
+    await runReclamationWorkerPort(
+      parentPort,
+      // SAFETY: the parent creates these cloneable boot options from its typed plan.
+      (workerData as { databaseOptions: SqliteSessionReclamationPlan["databaseOptions"] })
+        .databaseOptions,
+    );
   } else {
     throw new Error("SQLite transcript archive worker requires a supported operation");
   }
