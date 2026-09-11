@@ -41,6 +41,11 @@ describe("prepared model catalog worker plugin scope", () => {
     const pluginFile = writeFixturePlugin({ root, spinMs: 0 });
     const unrelatedPluginFile = writeUnrelatedFixturePlugin(root);
     const config = {
+      models: {
+        providers: {
+          [PROVIDER_ID]: { baseUrl: "https://worker-catalog.invalid/v1", models: [] },
+        },
+      },
       agents: {
         defaults: {
           model: `${PROVIDER_ID}/sqlite-model`,
