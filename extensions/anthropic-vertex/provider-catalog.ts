@@ -1,4 +1,4 @@
-import type { OpenClawConfig, ProviderRuntimeModel } from "openclaw/plugin-sdk/plugin-entry";
+import type { ProviderRuntimeModel } from "openclaw/plugin-sdk/plugin-entry";
 /**
  * Static Anthropic Vertex model catalog builder. It derives provider base URLs
  * from region configuration and publishes Claude model metadata.
@@ -9,20 +9,13 @@ import type {
 } from "openclaw/plugin-sdk/provider-model-shared";
 import {
   modelCostsEqual,
-  normalizeProviderId,
   resolveClaudeFable5ModelIdentity,
   resolveClaudeMythos5ModelIdentity,
   resolveClaudeOpus5ModelIdentity,
   resolveClaudeSonnet5ModelIdentity,
 } from "openclaw/plugin-sdk/provider-model-shared";
-import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalString,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
-import {
-  resolveAnthropicVertexBaseUrl,
-  resolveAnthropicVertexClientRegion,
-} from "./region-endpoint.js";
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { resolveAnthropicVertexClientRegion } from "./region-endpoint.js";
 import { resolveAnthropicVertexRegion } from "./region.js";
 /** Default Anthropic Vertex model used for implicit provider catalogs. */
 export const ANTHROPIC_VERTEX_DEFAULT_MODEL_ID = "claude-sonnet-4-6";
@@ -169,33 +162,18 @@ function buildAnthropicVertexCatalog(region: string): ModelDefinitionConfig[] {
   ];
 }
 
-/** Apply the service endpoint and generation metadata to static or explicit model rows. */
+/** Restore required generation metadata after explicit models replace an implicit row. */
 export function normalizeAnthropicVertexResolvedModel(
   modelId: string,
   model: ProviderRuntimeModel,
-  config?: OpenClawConfig,
-  env: NodeJS.ProcessEnv = process.env,
 ): ProviderRuntimeModel | undefined {
-  const configured = Object.entries(config?.models?.providers ?? {}).find(
-    ([provider]) => normalizeProviderId(provider) === "anthropic-vertex",
-  )?.[1];
-  const configuredBaseUrl =
-    normalizeOptionalString(configured?.models?.find((entry) => entry.id === modelId)?.baseUrl) ??
-    normalizeOptionalString(configured?.baseUrl);
-  const serviceRegionConfigured =
-    normalizeOptionalString(env.GOOGLE_CLOUD_LOCATION) ||
-    normalizeOptionalString(env.CLOUD_ML_REGION);
-  const baseUrl =
-    configuredBaseUrl ??
-    (serviceRegionConfigured ? resolveAnthropicVertexBaseUrl(env) : model.baseUrl);
-  const endpointModel = baseUrl === model.baseUrl ? model : { ...model, baseUrl };
   const ref = { id: modelId, params: model.params };
   const fable5 = resolveClaudeFable5ModelIdentity(ref) !== undefined;
   const mythos5 = resolveClaudeMythos5ModelIdentity(ref) !== undefined;
   const opus5 = resolveClaudeOpus5ModelIdentity(ref) !== undefined;
   const sonnet5 = resolveClaudeSonnet5ModelIdentity(ref) !== undefined;
   if (!fable5 && !mythos5 && !opus5 && !sonnet5) {
-    return endpointModel !== model ? endpointModel : undefined;
+    return undefined;
   }
   const input: ProviderRuntimeModel["input"] = model.input.includes("image")
     ? model.input
@@ -214,7 +192,7 @@ export function normalizeAnthropicVertexResolvedModel(
     model.thinkingLevelMap.max === "max" &&
     (!(fable5 || mythos5) ||
       (model.thinkingLevelMap.off === "low" && model.thinkingLevelMap.minimal === "low"));
-  const region = resolveAnthropicVertexClientRegion({ baseUrl, env });
+  const region = resolveAnthropicVertexClientRegion({ baseUrl: model.baseUrl });
   const cost = opus5 ? resolveOpus5Cost(region) : sonnet5 ? resolveSonnet5Cost(region) : undefined;
   const costMatches = !cost || modelCostsEqual(model.cost, cost);
   if (
@@ -226,10 +204,10 @@ export function normalizeAnthropicVertexResolvedModel(
     nativeThinkingLevelsMatch &&
     costMatches
   ) {
-    return endpointModel !== model ? endpointModel : undefined;
+    return undefined;
   }
   return {
-    ...endpointModel,
+    ...model,
     reasoning: true,
     input,
     contextWindow: ANTHROPIC_VERTEX_DEFAULT_CONTEXT_WINDOW,
@@ -248,7 +226,12 @@ export function buildAnthropicVertexProvider(params?: {
   nowMs?: number;
 }): ModelProviderConfig {
   const region = resolveAnthropicVertexRegion(params?.env);
-  const baseUrl = resolveAnthropicVertexBaseUrl(params?.env);
+  const baseUrl =
+    normalizeLowercaseStringOrEmpty(region) === "global"
+      ? "https://aiplatform.googleapis.com"
+      : region === "us" || region === "eu"
+        ? `https://aiplatform.${region}.rep.googleapis.com`
+        : `https://${region}-aiplatform.googleapis.com`;
 
   return {
     baseUrl,
