@@ -1,4 +1,17 @@
 import { expect, vi } from "vitest";
+import type { OpenClawConfig } from "../config/types.js";
+
+export function mockCompletedProviderUseBindingMigration() {
+  vi.doMock("./doctor/shared/provider-use-binding-migration.js", () => ({
+    prepareProviderUseBindingMigration: vi.fn(async ({ config }: { config: OpenClawConfig }) => ({
+      config,
+      changes: [],
+      pending: false,
+    })),
+    revalidateProviderUseBindingMigration: vi.fn(),
+    completeProviderUseBindingMigration: vi.fn(() => []),
+  }));
+}
 
 export function makePreflightConfigSnapshot(config: Record<string, unknown>) {
   return {

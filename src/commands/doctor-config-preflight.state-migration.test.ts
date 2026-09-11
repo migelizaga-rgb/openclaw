@@ -17,6 +17,7 @@ import {
   makePreflightConfigSnapshot,
   makeStartupConvergenceResult,
   makeStateMigrationResult,
+  mockCompletedProviderUseBindingMigration,
   queueConfigSnapshot,
   stateCheckpointOptions,
   startupCheckpointOptions,
@@ -26,6 +27,7 @@ import {
 } from "./doctor-config-preflight.state-migration.test-helpers.js";
 
 const maybeRepairPluginOpenClawHostLinks = getMaybeRepairPluginOpenClawHostLinksMock();
+mockCompletedProviderUseBindingMigration();
 
 const autoMigrateLegacyStateDir = vi.hoisted(() =>
   vi.fn(async (): Promise<StateMigrationResult> => makeStateMigrationResult([], false)),
