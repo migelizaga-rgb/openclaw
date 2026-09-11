@@ -10,3 +10,11 @@ export class ConfigMutationConflictError extends Error {
 }
 export const GUARDED_CONFIG_INCLUDE_WRITE_ERROR =
   "This approved operation cannot update include-owned configuration. Use a trusted shell for this change.";
+
+/** The include owner cannot retain caller authority through its final effects. */
+export class GuardedConfigIncludeWriteError extends Error {
+  constructor() {
+    super(GUARDED_CONFIG_INCLUDE_WRITE_ERROR);
+    this.name = "GuardedConfigIncludeWriteError";
+  }
+}

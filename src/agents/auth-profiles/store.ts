@@ -1167,9 +1167,9 @@ export function restoreAuthProfileStorePersistenceSnapshot(
 
       if (credentialsRestored) {
         if (snapshot.credentialsRaw === null) {
-          deletePersistedAuthProfileStoreRaw(agentDir, database);
+          deletePersistedAuthProfileStoreRaw(agentDir, database, owner);
         } else {
-          writePersistedAuthProfileStoreRaw(snapshot.credentialsRaw, agentDir, database);
+          writePersistedAuthProfileStoreRaw(snapshot.credentialsRaw, agentDir, database, owner);
         }
       }
       if (stateRestored) {
@@ -1994,7 +1994,7 @@ export function createAuthProfileStoreRuntime(
     agentDir: string | undefined,
     options: SaveAuthProfileStoreOptions | undefined,
     database: AuthProfileDatabase,
-    owner: AuthProfileStoreOwner | PreparedAuthProfileStoreOwner,
+    owner: PreparedAuthProfileStoreOwner,
     publishFromSuppliedStore = false,
   ): RuntimeSnapshotPublication {
     // Shared-state rows are global: never scope their persistence or runtime snapshots to an
@@ -2058,7 +2058,7 @@ export function createAuthProfileStoreRuntime(
         )
       : undefined;
     if (credentialsChanged) {
-      writePersistedAuthProfileStoreRaw(payload, persistenceAgentDir, database);
+      writePersistedAuthProfileStoreRaw(payload, persistenceAgentDir, database, owner);
     }
     if (stateChanged) {
       writePersistedAuthProfileStateRaw(statePayload, persistenceAgentDir, database);
@@ -2196,7 +2196,7 @@ export function createAuthProfileStoreRuntime(
     agentDir: string | undefined,
     options: SaveAuthProfileStoreOptions | undefined,
     database: AuthProfileDatabase,
-    owner: AuthProfileStoreOwner | PreparedAuthProfileStoreOwner,
+    owner: PreparedAuthProfileStoreOwner,
   ): void {
     const publish = saveAuthProfileStoreInTransaction(
       store,

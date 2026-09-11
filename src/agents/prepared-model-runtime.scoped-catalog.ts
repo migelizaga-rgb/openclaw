@@ -1,3 +1,4 @@
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { ProviderCatalogOutcome } from "../plugins/provider-catalog.types.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
@@ -26,16 +27,26 @@ import type {
 
 const MODEL_RUNTIME_PROVIDER_DISCOVERY_TIMEOUT_MS = 5_000;
 
+type ScopedCatalogSelection = {
+  requestedProviderIds?: readonly string[];
+  metadataSnapshot?: PluginMetadataSnapshot;
+  authStore?: AuthProfileStore;
+};
+
 async function prepareScopedReadOnlyModelCatalogWithMode(
   input: PreparedModelRuntimeInput,
   providerDiscoveryProviderIds: readonly string[],
   catalogMode: PreparedModelRuntimeCatalogMode,
+  selection?: ScopedCatalogSelection,
 ): Promise<ModelCatalogSnapshot> {
   const scopedInput = input.readOnly ? input : { ...input, readOnly: true };
   const { agentFacts, pluginGeneration } = await prepareWorkspaceBuildGroup(
     [scopedInput],
     catalogMode,
     { providerDiscoveryProviderIds },
+    undefined,
+    undefined,
+    selection?.metadataSnapshot,
   );
   const agentFactsForInput = agentFacts[0];
   if (!agentFactsForInput) {
@@ -46,7 +57,7 @@ async function prepareScopedReadOnlyModelCatalogWithMode(
     pluginGeneration,
     catalogMode,
     false,
-    catalogMode === "live" ? { providerDiscoveryProviderIds } : {},
+    catalogMode === "live" ? { providerDiscoveryProviderIds, ...selection } : {},
   );
   const { modelCatalog, configuredRuntimeModels } = await prepareFullCatalogFacts(
     agentFactsForInput,
@@ -75,8 +86,14 @@ export function prepareScopedReadOnlyModelCatalog(
 export function prepareScopedReadOnlyLiveModelCatalog(
   input: PreparedModelRuntimeInput,
   providerDiscoveryProviderIds: readonly string[],
+  selection?: ScopedCatalogSelection,
 ): Promise<ModelCatalogSnapshot> {
-  return prepareScopedReadOnlyModelCatalogWithMode(input, providerDiscoveryProviderIds, "live");
+  return prepareScopedReadOnlyModelCatalogWithMode(
+    input,
+    providerDiscoveryProviderIds,
+    "live",
+    selection,
+  );
 }
 
 export async function prepareAgentCatalogSource(
@@ -87,6 +104,7 @@ export async function prepareAgentCatalogSource(
   sourceOptions: {
     authStore?: AuthProfileStore;
     providerDiscoveryProviderIds?: readonly string[];
+    requestedProviderIds?: readonly string[];
   } = {},
 ): Promise<PreparedModelRuntimeCatalogSource> {
   const { env, input, providerIds } = agentFacts;
@@ -111,6 +129,7 @@ export async function prepareAgentCatalogSource(
   const options = {
     pluginMetadataSnapshot: pluginGeneration.pluginMetadataSnapshot,
     providerDiscoveryProviderIds: sourceOptions.providerDiscoveryProviderIds ?? providerIds,
+    requestedProviderIds: sourceOptions.requestedProviderIds,
     ...(pluginGeneration.preparedStaticProviderCatalog
       ? { preparedStaticProviderCatalog: pluginGeneration.preparedStaticProviderCatalog }
       : {}),

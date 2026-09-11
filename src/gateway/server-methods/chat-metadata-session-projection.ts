@@ -3,6 +3,7 @@ import type { PreparedAgentCredentialModes } from "../../agents/agent-auth-crede
 import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { readSessionRuntimeOwnership } from "../../agents/harness/session-runtime-ownership.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
+import type { ModelRef } from "../../agents/model-ref-shared.js";
 import { getPreparedModelRuntimeAuthMaterializations } from "../../agents/prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "../../agents/prepared-model-runtime.js";
 import { resolveSessionModelRef } from "../../agents/session-model-ref.js";
@@ -36,6 +37,7 @@ export async function prepareChatMetadataModelProjection(params: {
   preferredProfileId?: string;
   pinnedProfileId?: string;
   profileProvider?: string;
+  selectedModel?: ModelRef;
   runtimeOverride?: string;
   assertCurrent?: () => void;
 }): Promise<PreparedAgentProjection<{ models?: ModelChoice[] }>> {
@@ -48,6 +50,7 @@ export async function prepareChatMetadataModelProjection(params: {
   const snapshot = params.facts.modelCatalog;
   const projector = createGatewayAgentModelCatalogProjector({
     cfg: params.facts.owner.config,
+    selectedModel: params.selectedModel,
     agentId: params.facts.agentId,
     snapshot,
     metadataSnapshot: params.facts.owner.metadataSnapshot,
@@ -97,6 +100,7 @@ export function resolveSessionCatalogProfiles(
   pinnedProfileId?: string;
   profileProvider?: string;
   runtimeOverride?: string;
+  selectedModel?: ModelRef;
 } {
   const profileId = sessionEntry?.authProfileOverride?.trim();
   const runtime = sessionEntry?.agentRuntimeOverride?.trim();
@@ -108,6 +112,13 @@ export function resolveSessionCatalogProfiles(
         }).provider
       : undefined);
   const context = {
+    ...(sessionEntry?.modelOverride
+      ? {
+          selectedModel: resolveSessionModelRef(config, sessionEntry, agentId, {
+            allowPluginNormalization: false,
+          }),
+        }
+      : {}),
     ...(provider ? { profileProvider: provider } : {}),
     ...(runtime ? { runtimeOverride: runtime } : {}),
   };

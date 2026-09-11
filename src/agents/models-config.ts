@@ -61,6 +61,7 @@ type EnsureOpenClawModelsJsonOptions = {
   preparedStaticProviderCatalog?: PreparedProviderStaticCatalog;
   workspaceDir?: string;
   providerDiscoveryProviderIds?: readonly string[];
+  requestedProviderIds?: readonly string[];
   providerDiscoveryTimeoutMs?: number;
   providerDiscoveryEntriesOnly?: boolean;
   onProviderCatalogOutcome?: (outcome: ProviderCatalogOutcome) => void;
@@ -122,6 +123,7 @@ async function buildModelsJsonFingerprint(context: PreparedModelsConfigContext):
         ? null
         : context.pluginMetadataSnapshot.pluginIds.toSorted(),
     providerDiscoveryProviderIds: context.providerDiscoveryProviderIds,
+    requestedProviderIds: context.requestedProviderIds,
     providerDiscoveryTimeoutMs: context.providerDiscoveryTimeoutMs,
     providerDiscoveryEntriesOnly: context.providerDiscoveryEntriesOnly === true,
   });
@@ -260,6 +262,7 @@ function prepareModelsConfigContext(
     agentDir,
     env,
     envFingerprint: options.env ? hashRuntimeConfigValue(fingerprintEnv) : fingerprintEnv,
+    requestedProviderIds: options.requestedProviderIds,
     ...(workspaceDir ? { workspaceDir } : {}),
     ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
     ...(options.preparedStaticProviderCatalog

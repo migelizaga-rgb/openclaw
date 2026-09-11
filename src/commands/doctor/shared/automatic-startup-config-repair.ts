@@ -131,6 +131,7 @@ export async function commitAutomaticConfigRepair(
   plan: Pick<AutomaticConfigRepairPlan, "config">,
   snapshot: ConfigFileSnapshot,
   unsetPaths?: string[][],
+  withCommit?: import("../../../config/io.types.js").ConfigWriteOptions["withCommit"],
 ): Promise<void> {
   await transformConfigFile({
     baseHash: resolveConfigSnapshotHash(snapshot) ?? undefined,
@@ -141,6 +142,7 @@ export async function commitAutomaticConfigRepair(
     }),
     afterWrite: { mode: "none", reason: "automatic migration" },
     writeOptions: {
+      withCommit,
       expectedConfigPath: snapshot.path,
       auditOrigin: "doctor",
       skipOutputLogs: true,

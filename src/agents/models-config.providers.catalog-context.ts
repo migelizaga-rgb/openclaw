@@ -21,7 +21,78 @@ import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { resolveSelectedModelProviderIds } from "./model-selection-config.js";
 import type { ProviderConfig } from "./models-config.providers.secret-helpers.js";
 import { resolveProviderAuthAliasMap, resolveProviderIdForAuth } from "./provider-auth-aliases.js";
-import { resolveProviderUseAdmission } from "./provider-model-auth-source-plan.js";
+import {
+  resolveProviderUseAdmission,
+  type ProviderUseBinding,
+} from "./provider-model-auth-source-plan.js";
+
+type ProviderCatalogAuthScope = Pick<
+  Parameters<typeof runProviderCatalog>[0],
+  "providerIds" | "resolveProviderApiKey" | "resolveProviderAuth" | "reportCatalogOutcome"
+>;
+
+/** A destination's donor permission never depends on another destination's admission. */
+export async function runProviderCatalogForAdmittedDestinations(
+  params: ProviderCatalogAuthScope & {
+    provider: ProviderPlugin;
+    providerIds: readonly string[];
+    admission: ReadonlyMap<string, ProviderUseBinding>;
+    run: (scope: ProviderCatalogAuthScope) => Promise<ProviderCatalogResult>;
+  },
+): Promise<ProviderCatalogResult> {
+  const configured: string[] = [];
+  const bound: string[] = [];
+  for (const id of new Set(params.providerIds.map(normalizeProviderId))) {
+    (params.admission.get(id)?.kind === "provider-config" ? configured : bound).push(id);
+  }
+  const scopes = [
+    ...(configured.length ? [{ ids: configured, allowDonor: true }] : []),
+    ...bound.map((id) => ({ ids: [id], allowDonor: false })),
+  ];
+  const providers: Record<string, ProviderConfig> = {};
+  const outcomes: ProviderCatalogOutcome[] = [];
+  let hasResult = false;
+  for (const scope of scopes) {
+    const includes = (provider: string) => scope.ids.includes(normalizeProviderId(provider));
+    const canResolve = (provider: string) => scope.allowDonor || includes(provider);
+    const result = await params.run({
+      providerIds: scope.ids,
+      resolveProviderApiKey: (providerId) => {
+        const provider = providerId?.trim() || params.provider.id;
+        return canResolve(provider)
+          ? params.resolveProviderApiKey(provider)
+          : { apiKey: undefined, discoveryApiKey: undefined };
+      },
+      resolveProviderAuth: (providerId, options) => {
+        const provider = providerId?.trim() || params.provider.id;
+        return canResolve(provider)
+          ? params.resolveProviderAuth(provider, options)
+          : { apiKey: undefined, mode: "none", source: "none" };
+      },
+      reportCatalogOutcome: (outcome) => {
+        if (includes(outcome.provider)) {
+          params.reportCatalogOutcome?.(outcome);
+        }
+      },
+    });
+    if (!result) {
+      continue;
+    }
+    hasResult = true;
+    for (const [id, config] of Object.entries(
+      normalizePluginDiscoveryResult({
+        provider: params.provider,
+        result,
+      }),
+    )) {
+      if (includes(id)) {
+        providers[id] = config;
+      }
+    }
+    outcomes.push(...(result.outcomes ?? []).filter((outcome) => includes(outcome.provider)));
+  }
+  return hasResult ? { providers, ...(outcomes.length ? { outcomes } : {}) } : undefined;
+}
 
 /** Translate one catalog generation's source config and metadata into admission facts. */
 export function resolveCatalogProviderUseAdmission(params: {
@@ -31,6 +102,7 @@ export function resolveCatalogProviderUseAdmission(params: {
   agentDir: string;
   workspaceDir?: string;
   profiles?: AuthProfileStore["profiles"];
+  requestedProviderIds?: readonly string[];
   pluginMetadataSnapshot?: Pick<PluginMetadataSnapshot, "manifestRegistry" | "owners">;
 }) {
   const authAliasLookupParams = {
@@ -48,10 +120,13 @@ export function resolveCatalogProviderUseAdmission(params: {
     config: params.sourceConfigForSecrets ?? params.config,
     env: params.env,
     profiles: params.profiles,
-    requestedProviders: resolveSelectedModelProviderIds({
-      cfg: params.sourceConfigForSecrets ?? params.config ?? {},
-      agentId: resolveRegisteredAgentIdForDir(params.agentDir, params.env),
-    }),
+    requestedProviders: [
+      ...resolveSelectedModelProviderIds({
+        cfg: params.sourceConfigForSecrets ?? params.config ?? {},
+        agentId: resolveRegisteredAgentIdForDir(params.agentDir, params.env),
+      }),
+      ...(params.requestedProviderIds ?? []),
+    ],
     storedCredentialAuthAliases: resolveProviderAuthAliasMap({
       ...authAliasLookupParams,
       storedCredential: true,

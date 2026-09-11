@@ -247,6 +247,7 @@ function evaluateCliRuntimeModelAuthAvailability(
 }
 type CreateModelAuthAvailabilityResolverParams = {
   cfg: OpenClawConfig;
+  requestedProviderIds?: readonly string[];
   agentId?: string;
   authStore: AuthProfileStore;
   agentDir?: string;
@@ -416,10 +417,10 @@ export function createModelAuthAvailabilityResolver(
     config: params.cfg,
     env,
     profiles: store.profiles,
-    requestedProviders: resolveSelectedModelProviderIds({
-      cfg: params.cfg,
-      agentId: params.agentId,
-    }),
+    requestedProviders: [
+      ...resolveSelectedModelProviderIds({ cfg: params.cfg, agentId: params.agentId }),
+      ...(params.requestedProviderIds ?? []),
+    ],
     storedCredentialAuthAliases: resolveProviderAuthAliasMap({
       config: params.cfg,
       env,

@@ -36,6 +36,7 @@ import {
   prepareProviderCatalogRun,
   reportProviderCatalogSecretFailure,
   resolveCatalogProviderUseAdmission,
+  runProviderCatalogForAdmittedDestinations,
 } from "./models-config.providers.catalog-context.js";
 import {
   resolveImplicitProviderDiscoveryScope,
@@ -79,6 +80,7 @@ type ImplicitProviderParams = {
   pluginMetadataSnapshot?: Pick<PluginMetadataSnapshot, "index" | "manifestRegistry" | "owners">;
   preparedStaticProviderCatalog?: PreparedProviderStaticCatalog;
   providerDiscoveryProviderIds?: readonly string[];
+  requestedProviderIds?: readonly string[];
   staticCatalogProviderIds?: readonly string[];
   providerDiscoveryTimeoutMs?: number;
   providerDiscoveryEntriesOnly?: boolean;
@@ -260,18 +262,9 @@ async function resolvePluginImplicitProviders(
     const admittedProviderIds = (providerIds ?? catalogProviderRefs).filter((id) =>
       ctx.providerAdmission.has(normalizeProviderId(id)),
     );
-    const canResolveCatalogAuth = (id: string) =>
-      admittedProviderIds.includes(normalizeProviderId(id)) ||
-      admittedProviderIds.every(
-        (target) =>
-          ctx.providerAdmission.get(normalizeProviderId(target))?.kind === "provider-config",
-      );
     const catalogConfig = buildPluginCatalogConfig(ctx, provider);
     const resolveCatalogProviderApiKey = (providerId?: string) => {
       const resolvedProviderId = providerId?.trim() || provider.id;
-      if (!canResolveCatalogAuth(resolvedProviderId)) {
-        return { apiKey: undefined, discoveryApiKey: undefined };
-      }
       const resolved = ctx.resolveProviderApiKey(resolvedProviderId);
       if (
         resolved.apiKey ||
@@ -327,21 +320,25 @@ async function resolvePluginImplicitProviders(
         ? preparedStaticResults.get(provider)
         : await runProviderStaticCatalog({ provider });
     } else if (admittedProviderIds.length > 0) {
-      result = await runProviderCatalogWithTimeout({
+      result = await runProviderCatalogForAdmittedDestinations({
         provider,
-        authStore: ctx.authStore,
         providerIds: admittedProviderIds,
-        config: catalogConfig,
-        agentDir: ctx.agentDir,
-        workspaceDir: ctx.workspaceDir,
-        env: ctx.env,
+        admission: ctx.providerAdmission,
         resolveProviderApiKey: resolveCatalogProviderApiKey,
-        resolveProviderAuth: (providerId, options) =>
-          canResolveCatalogAuth(providerId?.trim() || provider.id)
-            ? ctx.resolveProviderAuth(providerId?.trim() || provider.id, options)
-            : { apiKey: undefined, mode: "none", source: "none" },
+        resolveProviderAuth: ctx.resolveProviderAuth,
         reportCatalogOutcome: ctx.onProviderCatalogOutcome,
-        timeoutMs: ctx.providerDiscoveryTimeoutMs ?? resolveLiveProviderCatalogTimeoutMs(ctx.env),
+        run: (scope) =>
+          runProviderCatalogWithTimeout({
+            provider,
+            authStore: ctx.authStore,
+            config: catalogConfig,
+            agentDir: ctx.agentDir,
+            workspaceDir: ctx.workspaceDir,
+            env: ctx.env,
+            ...scope,
+            timeoutMs:
+              ctx.providerDiscoveryTimeoutMs ?? resolveLiveProviderCatalogTimeoutMs(ctx.env),
+          }),
       });
     }
     if (!result && !useStaticCatalog && provider.staticCatalog) {

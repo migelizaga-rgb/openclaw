@@ -36,6 +36,7 @@ import {
   runOpenClawStateWriteTransaction,
   type OpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
+import { resolveOpenClawStateDirForDatabasePath } from "../../state/openclaw-state-db.paths.js";
 import { resolveUserPath } from "../../utils.js";
 import { resolveRegisteredAgentIdForDir } from "../agent-dir-registry.js";
 import {
@@ -43,6 +44,7 @@ import {
   resolveSharedAuthStorePath,
   type SharedAuthStoreOwnership,
 } from "./path-resolve.js";
+import { withAuthProfileStorePublication } from "./publication.js";
 import { prepareFreshSharedAuthStoreWrite } from "./shared-store-bootstrap.js";
 
 type AgentAuthProfileDatabase = Pick<
@@ -64,7 +66,7 @@ export type PreparedAuthProfileStoreOwner = AuthProfileStoreOwner & { env: NodeJ
 export function resolveAuthProfileStoreOwner(
   database: AuthProfileDatabase,
   env: NodeJS.ProcessEnv = process.env,
-): AuthProfileStoreOwner | PreparedAuthProfileStoreOwner {
+): PreparedAuthProfileStoreOwner {
   const prepared = authProfileTransactions.get(database)?.owner;
   if (prepared) {
     return prepared;
@@ -72,7 +74,12 @@ export function resolveAuthProfileStoreOwner(
   // A supplied shared connection already names its owner; ambient discovery can
   // select another database (or fail on it) before this connection is ever used.
   if (!("agentId" in database)) {
-    return { databasePath: database.path, sharedDatabasePath: database.path, location: "state-db" };
+    return {
+      databasePath: database.path,
+      sharedDatabasePath: database.path,
+      location: "state-db",
+      env: { ...env, OPENCLAW_STATE_DIR: resolveOpenClawStateDirForDatabasePath(database.path) },
+    };
   }
   return {
     ...prepareAuthProfileSharedOwner(env),
@@ -568,6 +575,7 @@ export function writePersistedAuthProfileStoreRaw(
   payload: unknown,
   agentDir?: string,
   database?: AuthProfileDatabase,
+  owner?: PreparedAuthProfileStoreOwner,
 ): void {
   const databaseKind = resolveAuthProfileDatabaseKind(agentDir, database);
   const write = (target: AuthProfileDatabase) => {
@@ -593,16 +601,23 @@ export function writePersistedAuthProfileStoreRaw(
     );
   };
   if (database) {
-    write(database);
+    withAuthProfileStorePublication(
+      database.db,
+      (owner ?? resolveAuthProfileStoreOwner(database)).env,
+      () => write(database),
+    );
     return;
   }
-  runAuthProfileWriteTransaction(agentDir, write);
+  runAuthProfileWriteTransaction(agentDir, (target, preparedOwner) =>
+    withAuthProfileStorePublication(target.db, preparedOwner.env, () => write(target)),
+  );
 }
 
 /** Deletes the persisted secrets-store row while leaving runtime state intact. */
 export function deletePersistedAuthProfileStoreRaw(
   agentDir?: string,
   database?: AuthProfileDatabase,
+  owner?: PreparedAuthProfileStoreOwner,
 ): void {
   const databaseKind = resolveAuthProfileDatabaseKind(agentDir, database);
   const remove = (target: AuthProfileDatabase) => {
@@ -618,10 +633,16 @@ export function deletePersistedAuthProfileStoreRaw(
     );
   };
   if (database) {
-    remove(database);
+    withAuthProfileStorePublication(
+      database.db,
+      (owner ?? resolveAuthProfileStoreOwner(database)).env,
+      () => remove(database),
+    );
     return;
   }
-  runAuthProfileWriteTransaction(agentDir, remove);
+  runAuthProfileWriteTransaction(agentDir, (target, preparedOwner) =>
+    withAuthProfileStorePublication(target.db, preparedOwner.env, () => remove(target)),
+  );
 }
 
 /** Writes or deletes the persisted runtime-state payload. */

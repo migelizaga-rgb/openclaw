@@ -5,7 +5,11 @@ import type {
   ModelsListParams,
   ModelsListResult,
 } from "../../../packages/gateway-protocol/src/schema/agents-models-skills.js";
-import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import {
+  resolveAgentDir,
+  resolveAgentWorkspaceDir,
+  resolveDefaultAgentId,
+} from "../../agents/agent-scope.js";
 import type { RuntimeAuthMaterialization } from "../../agents/auth-profiles/runtime-materializations.js";
 import { resolveConfiguredModelEntries } from "../../agents/configured-model-entries.js";
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
@@ -364,38 +368,75 @@ export async function prepareModelsListResult(
       : {}),
   });
   snapshot = preparedCatalog.snapshot;
-  const { defaultModel } = preparedCatalog;
+  const defaultModel = profiles.selectedModel
+    ? modelKey(profiles.selectedModel.provider, profiles.selectedModel.model)
+    : preparedCatalog.defaultModel;
   const preparedRuntimeAuthModes = preparedProjectionOwner?.authModes;
   const preparedRuntimeAuthMaterializations = preparedProjectionOwner?.authMaterializations;
   // Capture authority again after acquisition and before hydrating a personal projection.
   draft?.assertCurrent();
-  const projector =
+  const projectionParams: ModelCatalogDecisionParams = {
+    cfg,
+    agentId,
+    agentDir: sourceOwner?.agentDir,
+    workspaceDir,
+    snapshot: { ...snapshot, entries: preparedCatalog.catalog },
+    metadataSnapshot,
+    preparedAuthStore,
+    preparedRuntimeAuthModes,
+    preparedRuntimeAuthMaterializations,
+    // A complete catalog and its synthetic-auth probes cross the worker boundary together.
+    preparedSyntheticAuthComplete: publishedOwner
+      ? isPreparedModelCatalogFull(publishedOwner.modelCatalog)
+      : ownerSnapshot?.catalogComplete === true,
+    // Provider-config inventory describes shared authored configuration, not personal accounts.
+    requesterProfileId:
+      view === "provider-config" || !useRequesterDefaults
+        ? undefined
+        : (draft?.owner ?? params.requesterProfileId),
+    ...(view === "provider-config" ? {} : profiles),
+    routeResolverFactory: params.routeResolverFactory,
+    pluginRegistry: preparedPluginRegistry,
+    isCurrent,
+    observationConfig: preparedProjectionOwner?.observationConfig,
+  };
+  let projector =
     (usedPreloadedCatalog ? params.catalogProjector : undefined) ??
-    createGatewayAgentModelCatalogProjector({
-      cfg,
-      agentId,
-      agentDir: sourceOwner?.agentDir,
-      workspaceDir,
-      snapshot: { ...snapshot, entries: preparedCatalog.catalog },
-      metadataSnapshot,
-      preparedAuthStore,
-      preparedRuntimeAuthModes,
-      preparedRuntimeAuthMaterializations,
-      // A complete catalog and its synthetic-auth probes cross the worker boundary together.
-      preparedSyntheticAuthComplete: publishedOwner
-        ? isPreparedModelCatalogFull(publishedOwner.modelCatalog)
-        : ownerSnapshot?.catalogComplete === true,
-      // Provider-config inventory describes shared authored configuration, not personal accounts.
-      requesterProfileId:
-        view === "provider-config" || !useRequesterDefaults
-          ? undefined
-          : (draft?.owner ?? params.requesterProfileId),
-      ...(view === "provider-config" ? {} : profiles),
-      routeResolverFactory: params.routeResolverFactory,
-      pluginRegistry: preparedPluginRegistry,
-      isCurrent,
-      observationConfig: preparedProjectionOwner?.observationConfig,
-    });
+    createGatewayAgentModelCatalogProjector(projectionParams);
+  if (refresh && !params.preloadedOnly && view !== "provider-config" && profiles.selectedModel) {
+    const { prepareScopedReadOnlyLiveModelCatalog } =
+      await import("../../agents/prepared-model-runtime.scoped-catalog.js");
+    const provider = normalizeProviderId(profiles.selectedModel.provider);
+    const selected = await prepareScopedReadOnlyLiveModelCatalog(
+      {
+        config: cfg,
+        agentId,
+        agentDir: sourceOwner?.agentDir ?? resolveAgentDir(cfg, agentId),
+        workspaceDir,
+        readOnly: true,
+      },
+      [provider],
+      { requestedProviderIds: [provider], metadataSnapshot, authStore: projector.authStore },
+    );
+    const belongsToSelection = (entry: { provider: string }) =>
+      normalizeProviderId(entry.provider) === provider;
+    snapshot = {
+      ...snapshot,
+      entries: dedupeModelCatalogEntries([
+        ...projectionParams.snapshot.entries,
+        ...selected.entries.filter(belongsToSelection),
+      ]),
+      routeVariants: [
+        ...snapshot.routeVariants.filter((entry) => !belongsToSelection(entry)),
+        ...selected.routeVariants.filter(belongsToSelection),
+      ],
+      providerOutcomes: [
+        ...(snapshot.providerOutcomes ?? []).filter((entry) => !belongsToSelection(entry)),
+        ...(selected.providerOutcomes ?? []).filter(belongsToSelection),
+      ],
+    };
+    projector = createGatewayAgentModelCatalogProjector({ ...projectionParams, snapshot });
+  }
   const catalog = dedupeModelCatalogEntries([
     ...preparedCatalog.catalog,
     ...projector.snapshot.entries,

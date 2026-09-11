@@ -1,4 +1,5 @@
 import { AsyncResource } from "node:async_hooks";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -341,6 +342,61 @@ describe("direct config writer exclusion", () => {
 });
 
 describe("included config writer exclusion", () => {
+  it.each([false, true])(
+    "preserves publication authority and include refusal (include: %s)",
+    async (include) => {
+      const stateDir = tempDirs.make("openclaw-config-publication-");
+      const configPath = path.join(stateDir, "openclaw.json");
+      const target = include ? path.join(stateDir, "gateway.json5") : configPath;
+      const original = include
+        ? '{"mode":"local","port":18789}\n'
+        : '{"gateway":{"mode":"local","port":18789}}\n';
+      if (include) {
+        await fs.writeFile(configPath, '{"gateway":{"$include":"./gateway.json5"}}\n');
+      }
+      await fs.writeFile(target, original);
+      await withEnvAsync(
+        { OPENCLAW_STATE_DIR: stateDir, OPENCLAW_CONFIG_PATH: configPath },
+        async () => {
+          let allowed = false;
+          let committedUnderAuthority = false;
+          const write = () =>
+            mutateConfigFile({
+              mutate: (draft) => {
+                draft.gateway = { ...draft.gateway, port: 19876 };
+              },
+              writeOptions: {
+                skipPluginValidation: true,
+                skipRuntimeSnapshotRefresh: true,
+                withCommit: (publish) => {
+                  expect(readFileSync(target, "utf8")).toBe(original);
+                  if (!allowed) {
+                    throw new Error("Publication authority changed");
+                  }
+                  publish();
+                  const published = JSON.parse(readFileSync(target, "utf8"));
+                  expect(include ? published.port : published.gateway.port).toBe(19876);
+                  committedUnderAuthority = true;
+                },
+              },
+            });
+          if (include) {
+            await expect(write()).rejects.toThrow("cannot update include-owned configuration");
+            expect(await fs.readFile(target, "utf8")).toBe(original);
+            expect(committedUnderAuthority).toBe(false);
+            return;
+          }
+          await expect(write()).rejects.toThrow("Publication authority changed");
+          expect(await fs.readFile(target, "utf8")).toBe(original);
+          allowed = true;
+          await write();
+          expect(committedUnderAuthority).toBe(true);
+        },
+      );
+    },
+  );
+
+
   it.each([false, true])(
     "refuses inherited include authority before preparation (revoke=%s)",
     async (revoke) => {

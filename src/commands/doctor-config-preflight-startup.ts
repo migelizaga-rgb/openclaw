@@ -102,7 +102,7 @@ export async function commitStartupConfigRepairs(params: {
   if (params.migrateProviderBindings && snapshot.valid && snapshot.exists) {
     const {
       prepareProviderUseBindingMigration,
-      revalidateProviderUseBindingMigration,
+      writeProviderUseBindingMigration,
       completeProviderUseBindingMigration,
     } = await import("./doctor/shared/provider-use-binding-migration.js");
     const config = snapshot.sourceConfig ?? snapshot.config ?? {};
@@ -113,19 +113,27 @@ export async function commitStartupConfigRepairs(params: {
     if (bindingMigration.changes.length > 0 || bindingMigration.pending) {
       await guardWrite();
       if (bindingMigration.bindings) {
-        const checked = await revalidateProviderUseBindingMigration({
-          config: bindingMigration.config,
-          sourceConfig: snapshot.sourceConfig,
-          configPath: snapshot.path,
-          env: params.env,
-          bindings: bindingMigration.bindings,
-        });
+        const checked = await writeProviderUseBindingMigration(
+          {
+            config: bindingMigration.config,
+            sourceConfig: snapshot.sourceConfig,
+            configPath: snapshot.path,
+            env: params.env,
+            bindings: bindingMigration.bindings,
+          },
+          async (current, withCommit) => {
+            if (current.changes.length > 0) {
+              await commitAutomaticConfigRepair(
+                current,
+                snapshot,
+                bindingMigration.unsetPaths,
+                withCommit,
+              );
+            }
+          },
+        );
         bindingMigration = { ...bindingMigration, ...checked };
-        params.report({ changes: [], warnings: checked.warnings });
-      }
-      if (bindingMigration.changes.length > 0) {
-        await commitAutomaticConfigRepair(bindingMigration, snapshot, bindingMigration.unsetPaths);
-        params.report({ changes: bindingMigration.changes, warnings: [] });
+        params.report({ changes: checked.changes, warnings: checked.warnings });
         snapshotRead = await params.readSnapshot();
         snapshot = snapshotRead.snapshot;
       }

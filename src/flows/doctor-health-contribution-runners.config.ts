@@ -52,37 +52,39 @@ export async function runWriteConfigHealth(
   if (!bindings || ctx.configWriteRefusal) {
     return writeConfigHealth(ctx, options);
   }
-  const [{ withConfigMutationExclusive }, { revalidateProviderUseBindingMigration }, { note }] =
+  const [{ withConfigMutationExclusive }, { writeProviderUseBindingMigration }, { note }] =
     await Promise.all([
       import("../config/config.js"),
       import("../commands/doctor/shared/provider-use-binding-migration.js"),
       import("../../packages/terminal-core/src/note.js"),
     ]);
-  // The canonical config lock is reentrant; the existing writer retains its own checks.
   await withConfigMutationExclusive(async (sourceConfig) => {
-    await writeConfigHealth(ctx, options, async () => {
-      const checked = await revalidateProviderUseBindingMigration({
+    const panels = ctx.configResult.pendingChangePanels ?? [];
+    const checked = await writeProviderUseBindingMigration(
+      {
         config: ctx.cfg,
         sourceConfig,
         configPath: ctx.configPath,
         env: ctx.env ?? process.env,
         bindings,
-      });
-      ctx.cfg = checked.config;
-      ctx.configResult.providerUseBindingMigrationPending &&= checked.pending;
-      if (checked.warnings.length > 0) {
-        note(checked.warnings.join("\n"), "Doctor warnings");
-      }
-      if (checked.changes.length > 0) {
+      },
+      async (current, withCommit) => {
+        ctx.cfg = current.config;
+        ctx.configResult.providerUseBindingMigrationPending &&= current.pending;
         ctx.configResult.pendingChangePanels = [
-          ...(ctx.configResult.pendingChangePanels ?? []),
-          checked.changes.join("\n"),
+          ...panels,
+          ...(current.changes.length ? [current.changes.join("\n")] : []),
         ];
-      } else if (isDeepStrictEqual(ctx.cfg, sourceConfig)) {
-        ctx.configResult.shouldWriteConfig = false;
-        ctx.cfgForPersistence = structuredClone(ctx.cfg);
-      }
-    });
+        if (isDeepStrictEqual(ctx.cfg, sourceConfig)) {
+          ctx.configResult.shouldWriteConfig = false;
+          ctx.cfgForPersistence = structuredClone(ctx.cfg);
+        }
+        await writeConfigHealth(ctx, options, withCommit);
+      },
+    );
+    if (checked.warnings.length > 0) {
+      note(checked.warnings.join("\n"), "Doctor warnings");
+    }
     if (!ctx.configWriteRefusal) {
       delete ctx.configResult.providerUseBindings;
     }
@@ -92,7 +94,7 @@ export async function runWriteConfigHealth(
 async function writeConfigHealth(
   ctx: DoctorHealthFlowContext,
   options: { runPostWriteRepairs?: boolean } = {},
-  revalidateBindings?: () => Promise<void>,
+  withCommit?: import("../config/io.types.js").ConfigWriteOptions["withCommit"],
 ): Promise<void> {
   if (ctx.configWriteRefusal) {
     // The initial write already reported the refusal; retrying the
@@ -107,7 +109,6 @@ async function writeConfigHealth(
     await import("../commands/doctor/shared/config-flow-steps.js");
   const { assertShippedPluginInstallConfigImportCurrent } =
     await import("../commands/doctor/shared/plugin-registry-migration.js");
-  await revalidateBindings?.();
   const configResultWritePending =
     ctx.configResult.shouldWriteConfig === true && ctx.configResultWriteCommitted !== true;
   const confirmedConfigSource = configResultWritePending
@@ -144,6 +145,7 @@ async function writeConfigHealth(
         afterWrite: { mode: "auto" },
         writeOptions: {
           ...(confirmedConfigSource ? { expectedConfigPath: confirmedConfigSource.path } : {}),
+          withCommit,
           auditOrigin: "doctor",
           allowConfigSizeDrop: ctx.configResult.shouldWriteConfig === true || updateDoctorRun,
           skipPluginValidation:

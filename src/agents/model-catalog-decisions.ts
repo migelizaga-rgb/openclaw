@@ -27,6 +27,7 @@ import {
 import { prepareModelCatalogView } from "./model-catalog-view.js";
 import { loadManifestModelCatalog } from "./model-catalog.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "./model-catalog.types.js";
+import type { ModelRef } from "./model-ref-shared.js";
 import { dedupeModelCatalogEntries } from "./model-selection-shared.js";
 import {
   createOpenAIModelRoutesResolver,
@@ -51,6 +52,7 @@ function listEnabledSyntheticAuthProviderRefs(
 
 function createModelsListAuthResolver(params: {
   cfg: OpenClawConfig;
+  selectedModel?: ModelRef;
   agentId: string;
   metadataSnapshot: PluginMetadataSnapshot;
   preparedAuthStore: AuthProfileStore;
@@ -63,6 +65,7 @@ function createModelsListAuthResolver(params: {
   const agentDir = resolveAgentDir(params.cfg, params.agentId);
   return createModelAuthAvailabilityResolver({
     cfg: params.cfg,
+    requestedProviderIds: params.selectedModel ? [params.selectedModel.provider] : undefined,
     agentId: params.agentId,
     authStore: params.preparedAuthStore,
     agentDir,
@@ -165,6 +168,7 @@ function createModelsListEntryEvaluator(params: {
 
 export type ModelCatalogDecisionParams = {
   cfg: OpenClawConfig;
+  selectedModel?: ModelRef;
   agentId: string;
   agentDir?: string;
   workspaceDir?: string;
@@ -223,21 +227,25 @@ export function createModelCatalogDecisions(params: ModelCatalogDecisionParams) 
       }
     }
   }
-  const personalStaticEntries = personalProviders.size
+  const projectedProviders = new Set(personalProviders);
+  if (params.selectedModel) {
+    projectedProviders.add(normalizeProviderId(params.selectedModel.provider));
+  }
+  const projectedStaticEntries = projectedProviders.size
     ? [
         ...(params.snapshot.staticEntries ?? []),
         ...loadManifestModelCatalog({ config: params.cfg, metadataSnapshot }),
-      ].filter((entry) => personalProviders.has(normalizeProviderId(entry.provider)))
+      ].filter((entry) => projectedProviders.has(normalizeProviderId(entry.provider)))
     : [];
-  const snapshot = personalStaticEntries.length
+  const snapshot = projectedStaticEntries.length
     ? {
         ...params.snapshot,
-        entries: dedupeModelCatalogEntries([...params.snapshot.entries, ...personalStaticEntries]),
+        entries: dedupeModelCatalogEntries([...params.snapshot.entries, ...projectedStaticEntries]),
         routeVariants: [
           ...(params.snapshot.routeVariants.length
             ? params.snapshot.routeVariants
             : params.snapshot.entries),
-          ...personalStaticEntries,
+          ...projectedStaticEntries,
         ],
       }
     : params.snapshot;
@@ -277,6 +285,7 @@ export function createModelCatalogDecisions(params: ModelCatalogDecisionParams) 
   );
   const authResolver = createModelsListAuthResolver({
     cfg: params.cfg,
+    selectedModel: params.selectedModel,
     agentId: params.agentId,
     metadataSnapshot,
     preparedAuthStore: authStore,

@@ -3,12 +3,12 @@ import type { OpenClawConfig } from "../config/types.js";
 
 export function mockCompletedProviderUseBindingMigration() {
   vi.doMock("./doctor/shared/provider-use-binding-migration.js", () => ({
-    prepareProviderUseBindingMigration: vi.fn(async ({ config }: { config: OpenClawConfig }) => ({
+    prepareProviderUseBindingMigration: vi.fn(({ config }: { config: OpenClawConfig }) => ({
       config,
       changes: [],
       pending: false,
     })),
-    revalidateProviderUseBindingMigration: vi.fn(),
+    writeProviderUseBindingMigration: vi.fn(),
     completeProviderUseBindingMigration: vi.fn(() => []),
   }));
 }

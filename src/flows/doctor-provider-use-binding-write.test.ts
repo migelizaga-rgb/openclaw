@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDoctorPrompter } from "../commands/doctor-prompter.js";
@@ -20,12 +21,20 @@ vi.mock("../commands/onboard-helpers.js", () => ({
 let state: OpenClawTestState;
 afterEach(async () => {
   await state?.cleanup();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
-it.each([false, true])(
-  "retracts an env binding when a saved family account appears before the write (endpoint repair: %s)",
-  async (repairEndpoint) => {
+it.each(
+  [false, true].flatMap((repairEndpoint) =>
+    ["before-write", "temporary-file", "temporary-file-other-root"].map((timing) => ({
+      repairEndpoint,
+      timing,
+    })),
+  ),
+)(
+  "retracts an env binding when an account appears at $timing (endpoint repair: $repairEndpoint)",
+  async ({ repairEndpoint, timing }) => {
     state = await createOpenClawTestState({
       label: "doctor-provider-binding-write",
       env: {
@@ -66,7 +75,7 @@ it.each([false, true])(
       cfgForPersistence: structuredClone(prepared.config),
       configPath: state.configPath,
       sourceConfigValid: true,
-      env: state.env,
+      env: timing === "temporary-file-other-root" ? undefined : state.env,
       configResult: {
         cfg,
         shouldWriteConfig: true,
@@ -75,12 +84,34 @@ it.each([false, true])(
         unsetPaths: prepared.unsetPaths,
       },
     };
-    await state.writeAuthProfiles({
-      version: 1,
-      profiles: {
-        "byteplus:saved": { type: "api_key", provider: "byteplus", key: "fixture-saved-account" },
-      },
-    });
+    const saveAccount = () =>
+      state.writeAuthProfiles({
+        version: 1,
+        profiles: {
+          "byteplus:saved": { type: "api_key", provider: "byteplus", key: "fixture-saved-account" },
+        },
+      });
+    if (timing === "before-write") {
+      await saveAccount();
+    } else {
+      const writeFile = fs.writeFile;
+      let saved = false;
+      vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, fileOptions) => {
+        await writeFile(file, data, fileOptions);
+        if (
+          !saved &&
+          typeof data === "string" &&
+          data.includes('"byteplus-plan"') &&
+          data.includes('"BYTEPLUS_API_KEY"')
+        ) {
+          saved = true;
+          await saveAccount();
+          if (timing === "temporary-file-other-root") {
+            process.env.OPENCLAW_STATE_DIR = path.join(state.stateDir, "other-root");
+          }
+        }
+      });
+    }
 
     await runWriteConfigHealth(ctx, { runPostWriteRepairs: false });
 

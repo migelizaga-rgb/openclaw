@@ -8,13 +8,17 @@ import {
   listCandidateAuthProfileStores,
   loadCandidateAuthProfileStore,
 } from "../../../agents/auth-profiles/candidate-stores.js";
+import { captureAuthProfileOwnerScope } from "../../../agents/auth-profiles/path-resolve.js";
 import { loadPersistedAuthProfileStoreAtDatabasePath } from "../../../agents/auth-profiles/persisted.js";
+import { withAuthProfilePublicationLock } from "../../../agents/auth-profiles/publication.js";
 import type { AuthProfileStore } from "../../../agents/auth-profiles/types.js";
 import { resolveSelectedModelProviderIds } from "../../../agents/model-selection-config.js";
 import {
   isGenericProviderCredentialEnvVar,
   resolveProviderUseAdmission,
 } from "../../../agents/provider-model-auth-source-plan.js";
+import { GuardedConfigIncludeWriteError } from "../../../config/mutation-conflict.js";
+import type { ConfigWriteOptions } from "../../../config/io.types.js";
 import { resolveResetPreservedSelection } from "../../../config/sessions/reset-preserved-selection.js";
 import { scanDoctorSessionEntriesTolerant } from "../../../config/sessions/session-accessor.js";
 import type { ModelProviderConfigInput } from "../../../config/types.models.js";
@@ -41,18 +45,18 @@ const DEFERRED =
   'Could not read provider upgrade state; shared-key bindings were left unchanged. Rerun "openclaw doctor --fix".';
 
 /** Preserve selected shared-key routes once; ordinary runtime selection never creates bindings. */
-export async function prepareProviderUseBindingMigration(params: {
+export function prepareProviderUseBindingMigration(params: {
   config: OpenClawConfig;
   configPath: string;
   env: NodeJS.ProcessEnv;
-}): Promise<{
+}): {
   config: OpenClawConfig;
   changes: string[];
   pending: boolean;
   warnings?: string[];
   unsetPaths?: string[][];
   bindings?: Record<string, SecretRef>;
-}> {
+} {
   const { config, configPath, env } = params;
   const unchanged = { config, changes: [], pending: false };
   // Doctor retains invalid source values until its config validation step.
@@ -77,7 +81,7 @@ export async function prepareProviderUseBindingMigration(params: {
     if (completed) {
       return unchanged;
     }
-    const candidates = await listCandidateAuthProfileStores({ cfg: config, env });
+    const candidates = listCandidateAuthProfileStores({ cfg: config, env });
     const sharedStore = loadPersistedAuthProfileStoreAtDatabasePath(
       resolveOpenClawStateSqlitePath(env),
       "shared-state",
@@ -297,7 +301,7 @@ export function resolveProviderUseBindingWriteMetadata(
 }
 
 /** Recheck proposed bindings after interactive or asynchronous repairs, before persistence. */
-export async function revalidateProviderUseBindingMigration(params: {
+export function revalidateProviderUseBindingMigration(params: {
   config: OpenClawConfig;
   sourceConfig?: OpenClawConfig;
   configPath: string;
@@ -324,31 +328,14 @@ export async function revalidateProviderUseBindingMigration(params: {
   for (const [provider] of proposed) {
     delete analysis.models?.providers?.[provider];
   }
-  const checked = await prepareProviderUseBindingMigration({ ...params, config: analysis });
+  const checked = prepareProviderUseBindingMigration({ ...params, config: analysis });
   const bindings: Record<string, SecretRef> = {};
   for (const [provider, apiKey] of proposed) {
     if (isDeepStrictEqual(checked.bindings?.[provider], apiKey)) {
       bindings[provider] = apiKey;
       continue;
     }
-    const entry = config.models?.providers?.[provider];
-    if (entry) {
-      delete entry.apiKey;
-      const authoredFields = Object.entries(entry).filter(
-        ([key, value]) =>
-          !(key === "baseUrl" && value === "") &&
-          !(key === "models" && Array.isArray(value) && value.length === 0),
-      );
-      if (authoredFields.length === 0) {
-        delete config.models?.providers?.[provider];
-      }
-    }
-  }
-  if (config.models?.providers && Object.keys(config.models.providers).length === 0) {
-    delete config.models.providers;
-    if (Object.keys(config.models).length === 0) {
-      delete config.models;
-    }
+    removeGeneratedProviderCredential(config, provider);
   }
   const deferred = Object.keys(checked.bindings ?? {}).filter(
     (provider) => !Object.hasOwn(bindings, provider),
@@ -371,6 +358,104 @@ export async function revalidateProviderUseBindingMigration(params: {
         `Bound selected provider ${provider} to ${apiKey.id} with an env SecretRef.`,
     ),
   };
+}
+
+function removeGeneratedProviderCredential(config: OpenClawConfig, provider: string): void {
+  const entry = config.models?.providers?.[provider];
+  if (entry) {
+    delete entry.apiKey;
+    const authoredFields = Object.entries(entry).filter(
+      ([key, value]) =>
+        !(key === "baseUrl" && value === "") &&
+        !(key === "models" && Array.isArray(value) && value.length === 0),
+    );
+    if (authoredFields.length === 0) {
+      delete config.models?.providers?.[provider];
+    }
+  }
+  if (config.models?.providers && Object.keys(config.models.providers).length === 0) {
+    delete config.models.providers;
+    if (Object.keys(config.models).length === 0) {
+      delete config.models;
+    }
+  }
+}
+
+type CheckedProviderBindings = ReturnType<typeof revalidateProviderUseBindingMigration>;
+class ProviderUseBindingPublicationChanged extends Error {
+  constructor(readonly checked: CheckedProviderBindings) {
+    super("Provider credentials changed before binding publication.");
+  }
+}
+
+/** Account writes and the config rename share one synchronous publication fence. */
+export async function writeProviderUseBindingMigration(
+  params: Parameters<typeof revalidateProviderUseBindingMigration>[0],
+  write: (
+    checked: CheckedProviderBindings,
+    withCommit?: ConfigWriteOptions["withCommit"],
+  ) => Promise<void>,
+): Promise<CheckedProviderBindings> {
+  const owner = captureAuthProfileOwnerScope(params.env);
+  const scopedParams = () => ({
+    ...params,
+    env: {
+      ...params.env,
+      OPENCLAW_STATE_DIR: owner.stateDir,
+      OPENCLAW_AGENT_DIR: owner.sharedMainDir,
+    },
+  });
+  let checked = revalidateProviderUseBindingMigration(scopedParams());
+  try {
+    await write(checked, Object.keys(checked.bindings).length === 0 ? undefined : (publish) => {
+      let entered = false;
+      try {
+        const currentParams = scopedParams();
+        withAuthProfilePublicationLock(currentParams.env, () => {
+          entered = true;
+          const current = revalidateProviderUseBindingMigration({
+            ...currentParams,
+            config: checked.config,
+            bindings: checked.bindings,
+          });
+          if (
+            !isDeepStrictEqual(current.config, checked.config) ||
+            !isDeepStrictEqual(current.bindings, checked.bindings) ||
+            (checked.pending && !current.pending)
+          ) {
+            throw new ProviderUseBindingPublicationChanged(current);
+          }
+          publish();
+        });
+      } catch (error) {
+        if (entered) {
+          throw error;
+        }
+        // An unavailable external lock cannot certify a migration or prevent startup.
+        throw new ProviderUseBindingPublicationChanged(checked);
+      }
+    });
+  } catch (error) {
+    if (error instanceof ProviderUseBindingPublicationChanged) {
+      checked = error.checked;
+    } else if (error instanceof GuardedConfigIncludeWriteError) {
+      checked.warnings.push("Provider bindings in included config require an explicit edit to the included file.");
+    } else {
+      throw error;
+    }
+    // Publish independent repairs, but do not retry newly stale credential authority.
+    for (const provider of Object.keys(checked.bindings)) {
+      removeGeneratedProviderCredential(checked.config, provider);
+    }
+    checked.bindings = {};
+    checked.pending = false;
+    checked.changes = [];
+    checked.warnings.push(
+      'Could not verify stored accounts before saving provider bindings; shared-key bindings were deferred. Rerun "openclaw doctor --fix".',
+    );
+    await write(checked);
+  }
+  return checked;
 }
 
 /** A successful Doctor write closes the upgrade window, including an empty selection. */

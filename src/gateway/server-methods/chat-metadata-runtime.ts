@@ -188,6 +188,8 @@ function sessionProjectionKey(
     profiles.pinnedProfileId ?? "",
     profiles.profileProvider ?? "",
     profiles.runtimeOverride ?? "",
+    profiles.selectedModel?.provider ?? "",
+    profiles.selectedModel?.model ?? "",
   ].join("\0");
 }
 
@@ -196,7 +198,8 @@ function hasSessionCatalogContext(profiles: ReturnType<typeof resolveSessionCata
     profiles.preferredProfileId !== undefined ||
     profiles.pinnedProfileId !== undefined ||
     profiles.profileProvider !== undefined ||
-    profiles.runtimeOverride !== undefined
+    profiles.runtimeOverride !== undefined ||
+    profiles.selectedModel !== undefined
   );
 }
 

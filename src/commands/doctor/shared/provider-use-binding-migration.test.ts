@@ -13,6 +13,7 @@ import {
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { SecretRef } from "../../../config/types.secrets.js";
+import { acquireFileLockSyncWithRetry } from "../../../infra/file-lock-sync.js";
 import { resolveProviderBindingEnvVarCandidates } from "../../../secrets/provider-env-vars.js";
 import { runOpenClawAgentWriteTransaction } from "../../../state/openclaw-agent-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../../state/openclaw-state-db.paths.js";
@@ -24,6 +25,7 @@ import {
   completeProviderUseBindingMigration,
   prepareProviderUseBindingMigration,
   revalidateProviderUseBindingMigration,
+  writeProviderUseBindingMigration,
 } from "./provider-use-binding-migration.js";
 
 vi.mock("./active-tool-schema-warnings.js", () => ({
@@ -79,6 +81,40 @@ function prepare(config: OpenClawConfig) {
     env: state.env,
   });
 }
+
+it("defers shared-key bindings without failing when account publication is busy", async () => {
+  const migration = prepare(selectedPlan);
+  assert(migration.bindings);
+  const locks = path.join(state.stateDir, "locks");
+  await fs.mkdir(locks, { recursive: true });
+  const release = acquireFileLockSyncWithRetry(path.join(locks, "auth-profile-publication"));
+  const publish = vi.fn();
+  try {
+    const result = await writeProviderUseBindingMigration(
+      {
+        config: { ...migration.config, browser: { enabled: false } },
+        sourceConfig: selectedPlan,
+        configPath: state.configPath,
+        env: state.env,
+        bindings: migration.bindings,
+      },
+      async (checked, withCommit) => {
+        if (withCommit) {
+          withCommit(publish);
+        } else {
+          expect(checked.config.models?.providers?.["byteplus-plan"]).toBeUndefined();
+          expect(checked.config.browser?.enabled).toBe(false);
+        }
+      },
+    );
+    expect(publish).not.toHaveBeenCalled();
+    expect(result.pending).toBe(false);
+    expect(result.changes).toEqual([]);
+    expect(result.warnings.join("\n")).toContain("bindings were deferred");
+  } finally {
+    release();
+  }
+});
 
 function admitted(config: OpenClawConfig) {
   return resolveProviderUseAdmission({

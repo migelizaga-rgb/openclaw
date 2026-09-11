@@ -86,6 +86,8 @@ export type ConfigWriteOptions = {
   preCommitRuntimePreflight?: (sourceConfig: OpenClawConfig) => Promise<unknown>;
   /** Revalidate authority at the final root-file publication; requires atomic rename. */
   beforeCommit?: () => void | Promise<void>;
+  /** Hold synchronous owner authority through the atomic root-file rename. */
+  withCommit?: (publish: () => void) => void;
   /** Snapshot-time hashes for include files that mutation writers may update. */
   includeFileHashesForWrite?: Record<string, string>;
   /** Snapshot-time canonical include targets that writers may update. */

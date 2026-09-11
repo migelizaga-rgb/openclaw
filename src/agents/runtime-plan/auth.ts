@@ -40,6 +40,7 @@ export function buildAgentRuntimeAuthPlan(params: {
   modelRoute?: AgentRuntimeAuthPlan["modelRoute"];
   deferredRouteSupport?: AgentRuntimeAuthPlan["deferredRouteSupport"];
   credentialSource?: AgentRuntimeAuthPlan["credentialSource"];
+  boundEnvVar?: string;
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
@@ -105,5 +106,6 @@ export function buildAgentRuntimeAuthPlan(params: {
     ...(params.modelRoute ? { modelRoute: params.modelRoute } : {}),
     ...(params.deferredRouteSupport ? { deferredRouteSupport: params.deferredRouteSupport } : {}),
     ...(params.credentialSource ? { credentialSource: params.credentialSource } : {}),
+    ...(params.boundEnvVar ? { boundEnvVar: params.boundEnvVar } : {}),
   } satisfies AgentRuntimeAuthPlan;
 }

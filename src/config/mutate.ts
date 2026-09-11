@@ -56,7 +56,7 @@ import { injectExplicitlySetPaths, projectConfigWriteSource } from "./io.write-p
 import { warnIfJSON5CommentsWillBeStripped } from "./json5-comments.js";
 import {
   ConfigMutationConflictError,
-  GUARDED_CONFIG_INCLUDE_WRITE_ERROR,
+  GuardedConfigIncludeWriteError,
 } from "./mutation-conflict.js";
 import type { ConfigMutationBase } from "./mutation-types.js";
 import { resolveConfigPath } from "./paths.js";
@@ -756,11 +756,12 @@ async function tryWriteIncludeOwnedConfigMutation(params: {
   if (
     captureConfigWriteLockGuard(params.snapshot.path) ||
     params.writeOptions?.assertCurrent ||
-    params.writeOptions?.beforeCommit
+    params.writeOptions?.beforeCommit ||
+    params.writeOptions?.withCommit
   ) {
     // Root-backed include backups/publication cannot recheck caller authority
     // at their final effects. Refuse before preparing any include mutation.
-    throw new Error(GUARDED_CONFIG_INCLUDE_WRITE_ERROR);
+    throw new GuardedConfigIncludeWriteError();
   }
 
   const writeEnv = params.io?.env ?? process.env;

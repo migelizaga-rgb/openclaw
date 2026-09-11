@@ -1,5 +1,4 @@
-import type { Dirent } from "node:fs";
-import fs from "node:fs/promises";
+import fs, { type Dirent } from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -14,8 +13,8 @@ import {
   loadPersistedAuthProfileStore,
   loadPersistedAuthProfileStoreAtDatabasePath,
 } from "./persisted.js";
-import { resolveAuthProfileDatabasePath } from "./sqlite.js";
-import { saveAuthProfileStore } from "./store-runtime.js";
+import { resolveAuthProfileDatabasePath, resolveAuthProfileStoreOwner } from "./sqlite.js";
+import { saveAuthProfileStoreWithPreparedOwner } from "./store-runtime.js";
 import type { AuthProfileStore } from "./types.js";
 
 export type CandidateAuthProfileStore = {
@@ -35,11 +34,11 @@ function canonicalizeDatabasePath(databasePath: string): string {
   return resolvePathViaExistingAncestorSync(path.resolve(databasePath));
 }
 
-async function collectStateRootCandidates(env: NodeJS.ProcessEnv): Promise<CandidateSource[]> {
+function collectStateRootCandidates(env: NodeJS.ProcessEnv): CandidateSource[] {
   const agentsRoot = path.join(resolveStateDir(env), "agents");
   let entries: Dirent[];
   try {
-    entries = await fs.readdir(agentsRoot, { withFileTypes: true });
+    entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
   } catch (error) {
     if (isErrno(error) && error.code === "ENOENT") {
       return [];
@@ -64,10 +63,10 @@ async function collectStateRootCandidates(env: NodeJS.ProcessEnv): Promise<Candi
  * identity. Registered paths cover custom database locations that cannot be
  * reconstructed from an agent directory.
  */
-export async function listCandidateAuthProfileStores(params: {
+export function listCandidateAuthProfileStores(params: {
   cfg: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
-}): Promise<CandidateAuthProfileStore[]> {
+}): CandidateAuthProfileStore[] {
   const env = params.env ?? process.env;
   const sources: CandidateSource[] = [];
   for (const entry of listAgentEntries(params.cfg)) {
@@ -83,7 +82,7 @@ export async function listCandidateAuthProfileStores(params: {
       databasePath: resolveAuthProfileDatabasePath(agentDir),
     });
   }
-  sources.push(...(await collectStateRootCandidates(env)));
+  sources.push(...collectStateRootCandidates(env));
   for (const registered of listOpenClawRegisteredAgentDatabases({ env })) {
     sources.push({
       agentId: normalizeAgentId(registered.agentId),
@@ -136,7 +135,7 @@ export function updateCandidateAuthProfileStore(params: {
       const changed = params.updater(store);
       if (changed) {
         const profileIds = [params.profileId];
-        saveAuthProfileStore(
+        saveAuthProfileStoreWithPreparedOwner(
           store,
           params.candidate.agentDir,
           {
@@ -150,6 +149,7 @@ export function updateCandidateAuthProfileStore(params: {
               : {}),
           },
           database,
+          resolveAuthProfileStoreOwner(database, params.candidate.env),
         );
       }
       return { changed, store };

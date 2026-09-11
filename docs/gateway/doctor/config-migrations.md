@@ -93,6 +93,11 @@ beyond the grace period.
       the upgrade open. The warning names the variable and asks you to rerun
       Doctor from the service environment or with that variable set. Gateway
       startup can finish the same repair using its service environment.
+      If an account is saved while Doctor prepares the config write, Doctor
+      defers the new shared-key bindings, keeps the upgrade open, and saves
+      independent config repairs. It never writes a generated binding over the
+      saved account. If a binding requires a guarded write to an included config
+      file, Doctor leaves it pending and asks you to edit that file explicitly.
       The provider overlay contains
       only the credential reference; bundled catalog defaults stay with the provider:
 

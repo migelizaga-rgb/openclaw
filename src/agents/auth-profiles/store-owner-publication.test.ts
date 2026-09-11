@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { prepareSecretsRuntimeFastPathSnapshot } from "../../secrets/runtime-fast-path.js";
 import { activateSecretsRuntimeSnapshotState } from "../../secrets/runtime-state.js";
+import { runOpenClawAgentWriteTransaction } from "../../state/openclaw-agent-db.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import { withEnv } from "../../test-utils/env.js";
 import {
@@ -16,12 +17,14 @@ import {
 } from "./mutation-lineage.js";
 import { createOAuthRefreshFence } from "./oauth-refresh-marker.js";
 import { loadPersistedAuthProfileStore, loadPersistedSharedAuthProfileStore } from "./persisted.js";
+import { withAuthProfilePublicationLock } from "./publication.js";
 import {
   replaceRuntimeAuthProfileStoreSnapshots,
   setRuntimeAuthProfileStoreSnapshot,
 } from "./runtime-snapshots.js";
 import {
   resolveAuthProfileDatabasePath,
+  resolveAuthProfileStoreOwner,
   runAuthProfileWriteTransaction,
   writePersistedAuthProfileStoreRaw,
 } from "./sqlite.js";
@@ -29,6 +32,7 @@ import {
   ensureAuthProfileStoreWithoutExternalProfiles,
   loadAuthProfileStoreWithoutExternalProfiles,
   saveAuthProfileStore,
+  saveAuthProfileStoreWithPreparedOwner,
   saveAuthProfileStoreIfPersistenceSnapshotMatches,
   updateAuthProfileStoreWithLock,
 } from "./store-runtime.js";
@@ -45,6 +49,85 @@ const { tempDirs, saveOptions, apiKey, store, snapshotAt, unreadableOuter, seedR
   createAuthOwnerTestFixtures();
 
 describe("auth publication owner receipts", () => {
+  it("holds a supplied agent's publication fence until rollback under its captured state root", async () => {
+    const root = await seedRoot("original");
+    const outer = await seedRoot("unrelated");
+    const agentId = runAuthProfileWriteTransaction(
+      root.agentDir,
+      (database) => {
+        if (!("agentId" in database)) {
+          throw new Error("Fixture requires an agent-owned database");
+        }
+        return database.agentId;
+      },
+      { env: root.env },
+    );
+    const lockPath = path.join(root.stateDir, "locks", "auth-profile-publication.lock");
+    const outerLockPath = path.join(outer.stateDir, "locks", "auth-profile-publication.lock");
+    expect(() =>
+      withEnv(outer.env, () =>
+        runOpenClawAgentWriteTransaction(
+          (database) => {
+            saveAuthProfileStoreWithPreparedOwner(
+              store("replacement"),
+              root.agentDir,
+              saveOptions,
+              database,
+              resolveAuthProfileStoreOwner(database, root.env),
+            );
+            expect(fs.existsSync(lockPath)).toBe(true);
+            expect(fs.existsSync(outerLockPath)).toBe(false);
+            throw new Error("rollback publication");
+          },
+          { agentId, path: root.agentPath, env: root.env },
+        ),
+      ),
+    ).toThrow("rollback publication");
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(loadPersistedAuthProfileStore(root.agentDir)?.profiles.local).toEqual(
+      apiKey("original-local"),
+    );
+  });
+
+  it("preserves successful publication when lock cleanup fails and blocks the next write until cleanup succeeds", async () => {
+    const root = await seedRoot("original");
+    const lockPath = path.join(
+      fs.realpathSync(root.stateDir),
+      "locks",
+      "auth-profile-publication.lock",
+    );
+    const remove = fs.rmSync;
+    const failure = Object.assign(new Error("publication lock cleanup denied"), { code: "EACCES" });
+    const mock = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (target === lockPath) {
+        throw failure;
+      }
+      return remove(target, options);
+    });
+    let publications = 0;
+    try {
+      expect(() =>
+        withAuthProfilePublicationLock(root.env, () => {
+          publications += 1;
+        }),
+      ).not.toThrow();
+      expect(publications).toBe(1);
+      expect(() =>
+        withAuthProfilePublicationLock(root.env, () => {
+          publications += 1;
+        }),
+      ).toThrow(failure);
+      expect(publications).toBe(1);
+    } finally {
+      mock.mockRestore();
+      withAuthProfilePublicationLock(root.env, () => {
+        publications += 1;
+      });
+    }
+    expect(publications).toBe(2);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
   it.each(["prepare", "activate"] as const)(
     "requires a recorded migration diagnosis discovered at %s before empty-owner activation",
     async (discoveredAt) => {

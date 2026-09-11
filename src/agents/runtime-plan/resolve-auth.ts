@@ -1,12 +1,12 @@
 /** Resolves credentials for an immutable prepared runtime route. */
 import { toErrorObject } from "../../infra/errors.js";
-import { resolveProviderBindingEnvVarCandidates } from "../../secrets/provider-env-vars.js";
 import { SecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
+import { normalizeOptionalSecretInput } from "../../utils/normalize-secret-input.js";
 import { OAuthRefreshFailureError } from "../auth-profiles/oauth-refresh-failure.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { isProfileInCooldown } from "../auth-profiles/usage-state.js";
+import { ProviderAuthError } from "../model-auth-runtime-shared.js";
 import { getApiKeyForModelCore } from "../model-auth.js";
-import { resolveProviderUseAdmission } from "../provider-model-auth-source-plan.js";
 import { providerModelRouteAcceptsAuthMode } from "../provider-model-route-auth.js";
 import { shouldForceDirectAuthFallbackModelResolve } from "./credential-scoped-model.js";
 import { sameAgentRuntimeAuthModelRoute } from "./model-route.js";
@@ -275,13 +275,13 @@ export async function resolvePreparedRuntimeModelAuth(
     return Boolean(profileId?.trim()) && values.indexOf(profileId) === index;
   });
   if (candidates.length === 0) {
-    const binding = resolveProviderUseAdmission({
-      config: params.cfg,
-      providerEnvVars: resolveProviderBindingEnvVarCandidates({
-        config: params.cfg,
-        workspaceDir: params.workspaceDir,
-      }),
-    }).get(params.model.provider.trim().toLowerCase());
+    if (plan.boundEnvVar && !normalizeOptionalSecretInput(process.env[plan.boundEnvVar])) {
+      throw new ProviderAuthError(
+        "missing-provider-auth",
+        params.model.provider,
+        `Prepared environment credential "${plan.boundEnvVar}" is no longer available for ${params.model.provider}. Restore it or prepare a new request.`,
+      );
+    }
     // The planner selected direct auth. Resolve only env/config material so an
     // unrelated full store cannot replace or pre-reject that immutable source.
     const auth = await getApiKeyForModelCore({
@@ -290,7 +290,7 @@ export async function resolvePreparedRuntimeModelAuth(
       lockedProfile: false,
       allowAuthProfileFallback: false,
       skipSetupProviderFallback: plan.modelRoute?.provider === "openai",
-      boundEnvVar: binding?.kind === "environment" ? binding.envVar : undefined,
+      boundEnvVar: plan.boundEnvVar,
     });
     assertResolvedAuthMatchesPreparedRoute({ plan, auth });
     return { auth, plan: applyResolvedAuthToPlan({ plan, auth, candidates }) };
