@@ -174,6 +174,24 @@ export function registerDoctorConfigReceiptTests(
   runDoctorHealthFlow: typeof import("./doctor-health.js").runDoctorHealthFlow,
   postInstallAdvisory: NonNullable<DoctorHealthFlowContext["postInstallDoctorResult"]>,
 ) {
+  it("finishes with a warning when a valid managed config is read-only", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      await state.writeConfig({});
+      mocks.runContributions.mockImplementation(async (ctx) => {
+        ctx.configPath = state.configPath;
+        ctx.configWriteRefusal = "read-only";
+      });
+      const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
+
+      await runDoctorHealthFlow(runtime, {});
+
+      expect(runtime.exit).not.toHaveBeenCalledWith(1);
+      expect(mocks.outro).toHaveBeenCalledWith(
+        "Doctor complete. The config is read-only; pending config fixes were left unchanged.",
+      );
+    });
+  });
+
   it.each(["unchanged", "ok", "error", "advisory", "interleaved"] as const)(
     "reports the consumed input and last committed Doctor config hash before exiting (%s)",
     async (outcome) => {

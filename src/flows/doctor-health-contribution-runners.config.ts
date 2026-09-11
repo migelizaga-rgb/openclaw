@@ -5,7 +5,7 @@ import { UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE_ENV } from "../commands/doct
 import { getConfigValueAtPath } from "../config/config-paths.js";
 import { resolveIsConfigReadOnly, resolveIsNixMode } from "../config/paths.js";
 import { collectNestedErrorCandidates } from "../infra/error-graph-internal.js";
-import { extractErrorCode } from "../infra/errors.js";
+import { extractErrorCode, isErrno } from "../infra/errors.js";
 import type { DoctorHealthFlowContext } from "./doctor-health-contribution-types.js";
 import {
   isUpdateDoctorRun,
@@ -103,17 +103,49 @@ async function noteReadOnlyConfigWrite(
   ctx: DoctorHealthFlowContext,
   error: unknown,
 ): Promise<boolean> {
-  const codes = new Set([
-    "EROFS",
-    "EACCES",
-    "EPERM",
-    "OPENCLAW_CONFIG_READONLY",
-    "OPENCLAW_NIX_MODE_CONFIG_IMMUTABLE",
+  const [
+    { isCronOwnerWriteRefusalError },
+    { isConfigIncludeOwnershipError, isConfigValidationFailedError },
+    { ConfigRuntimeRefreshError },
+  ] = await Promise.all([
+    import("../config/io.cron-owner-refusal.js"),
+    import("../config/io.write-errors.js"),
+    import("../config/io.types.js"),
   ]);
+  const causes = collectNestedErrorCandidates(error);
   if (
-    !collectNestedErrorCandidates(error).some((candidate) =>
-      codes.has(extractErrorCode(candidate) ?? ""),
+    causes.some(
+      (cause) =>
+        isCronOwnerWriteRefusalError(cause) ||
+        isConfigIncludeOwnershipError(cause) ||
+        isConfigValidationFailedError(cause) ||
+        cause instanceof ConfigRuntimeRefreshError,
     )
+  ) {
+    return false;
+  }
+  const configPath = nodePath.resolve(ctx.configPath);
+  if (
+    !causes.some((candidate) => {
+      const code = extractErrorCode(candidate);
+      if (code === "OPENCLAW_CONFIG_READONLY" || code === "OPENCLAW_NIX_MODE_CONFIG_IMMUTABLE") {
+        return true;
+      }
+      if (
+        !isErrno(candidate) ||
+        !["EROFS", "EACCES", "EPERM"].includes(code ?? "") ||
+        typeof candidate.path !== "string"
+      ) {
+        return false;
+      }
+      const failedPath = nodePath.resolve(candidate.path);
+      return (
+        failedPath === nodePath.dirname(configPath) ||
+        failedPath === configPath ||
+        (nodePath.dirname(failedPath) === nodePath.dirname(configPath) &&
+          nodePath.basename(failedPath).startsWith(`${nodePath.basename(configPath)}.`))
+      );
+    })
   ) {
     return false;
   }
@@ -128,7 +160,9 @@ async function noteReadOnlyConfigWrite(
     [
       `Doctor cannot write the read-only config ${ctx.configPath}. Edit its managed source instead.`,
       ...entries,
-      "Provider binding completion remains pending; no receipt was written.",
+      ...(ctx.configResult.providerUseBindingMigrationPending || entries.length > 0
+        ? ["Provider binding completion remains pending; no receipt was written."]
+        : []),
     ].join("\n"),
     "Doctor warnings",
   );

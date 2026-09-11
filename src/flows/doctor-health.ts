@@ -115,6 +115,7 @@ async function runDoctorHealthFlowWithResult(
     ReturnType<typeof import("../commands/doctor-maintenance.js").beginDoctorMaintenance>
   >;
   let exitCode: number | undefined;
+  let readOnlyConfig = false;
   let doctorResult: UpdatePostInstallDoctorResult = { status: "error" };
   try {
     const { beginDoctorMaintenance } = await import("../commands/doctor-maintenance.js");
@@ -181,7 +182,8 @@ async function runDoctorHealthFlowWithResult(
     };
     const { runDoctorHealthContributions } = await import("./doctor-health-contributions.js");
     await runDoctorHealthContributions(ctx);
-    if (ctx.configWriteRefusal) {
+    readOnlyConfig = ctx.configWriteRefusal === "read-only" && ctx.sourceConfigValid;
+    if (ctx.configWriteRefusal && !readOnlyConfig) {
       // Config fixes were computed but refused by the writer; the warning above
       // already lists the manual work. This failure outranks a recoverable
       // post-install advisory because the run did not converge.
@@ -192,6 +194,10 @@ async function runDoctorHealthFlowWithResult(
       );
       exitCode = 1;
       return;
+    }
+    if (readOnlyConfig) {
+      const { createConfigIO } = await import("../config/io.js");
+      ctx.cfg = createConfigIO({ configPath: ctx.configPath, observe: false }).loadConfig();
     }
     if (options.repair === true || options.yes === true) {
       // Contributions can report optional migration warnings, but repair must not
@@ -228,6 +234,9 @@ async function runDoctorHealthFlowWithResult(
       ),
       ...(ctx.postInstallDoctorResult?.warnings ?? []),
       ...(ctx.updateWarnings ?? []),
+      ...(readOnlyConfig
+        ? [`Config ${ctx.configPath} is read-only; pending config fixes were left unchanged.`]
+        : []),
     ]);
     doctorResult = {
       ...(ctx.postInstallDoctorResult ?? { status: "ok" }),
@@ -272,5 +281,9 @@ async function runDoctorHealthFlowWithResult(
     }
   }
 
-  outro("Doctor complete.");
+  outro(
+    readOnlyConfig
+      ? "Doctor complete. The config is read-only; pending config fixes were left unchanged."
+      : "Doctor complete.",
+  );
 }

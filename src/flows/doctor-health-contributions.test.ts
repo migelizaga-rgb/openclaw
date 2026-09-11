@@ -4,6 +4,7 @@ import nodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDoctorConfigSnapshot } from "../commands/doctor-config-snapshot.test-helpers.js";
 import type { DoctorPrompter } from "../commands/doctor-prompter.js";
+import { ConfigRuntimeRefreshError } from "../config/io.types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { LEGACY_SECRETREF_ENV_MARKER_PREFIX } from "../config/types.secrets.js";
 import { fetchNpmPackageTargetStatus } from "../infra/update-check-package-target.js";
@@ -1335,6 +1336,32 @@ describe("doctor health contributions", () => {
     expect(mocks.note).not.toHaveBeenCalledWith(expect.anything(), "Doctor changes");
   });
 
+  it.each(["EACCES", "EROFS"])(
+    "does not soften a SecretRef %s failure into a read-only config warning",
+    async (code) => {
+      const cfg: OpenClawConfig = {};
+      const ctx = createDoctorContext({
+        cfg,
+        configResult: { cfg, shouldWriteConfig: true },
+        shouldRepair: true,
+        env: {},
+      });
+      const error = new ConfigRuntimeRefreshError("active SecretRef resolution failed", {
+        cause: Object.assign(new Error("cannot read credential file"), {
+          code,
+          path: "/managed/secrets/account",
+        }),
+      });
+      mocks.replaceConfigFile.mockRejectedValueOnce(error);
+
+      await expect(
+        requireDoctorContribution("doctor:write-config-migrations").run(ctx),
+      ).rejects.toBe(error);
+      expect(ctx.configWriteRefusal).toBeUndefined();
+      expect(ctx.configResultWriteCommitted).not.toBe(true);
+    },
+  );
+
   it("defers every config write after a cron ownership handoff refusal", async () => {
     const laterRun = vi.fn(async () => undefined);
     const cfg = {
@@ -1357,6 +1384,7 @@ describe("doctor health contributions", () => {
       Object.assign(
         new Error(
           'Config write refused: cannot inspect cron ownership. Run "openclaw doctor --fix", then retry.',
+          { cause: Object.assign(new Error("cannot read cron store"), { code: "EACCES" }) },
         ),
         { code: "CONFIG_WRITE_REJECTED", refusal: "cron-owner-safety" },
       ),

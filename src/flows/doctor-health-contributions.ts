@@ -68,7 +68,9 @@ async function reportDeferredLegacyState(ctx: DoctorHealthFlowContext): Promise<
       ? "Fix the config errors above."
       : ctx.configWriteRefusal === "include-ownership"
         ? "Repair the include boundary named above by hand."
-        : "Resolve the Gateway or cron-store condition above.";
+        : ctx.configWriteRefusal === "read-only"
+          ? `Update the managed source of ${ctx.configPath}.`
+          : "Resolve the Gateway or cron-store condition above.";
   note(
     [
       "Pending owners and blockers:",
