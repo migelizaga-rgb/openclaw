@@ -27,6 +27,7 @@ type DiscoverModelsOptions = {
   includePluginCatalogs?: boolean;
   modelsJsonContents?: string | null;
   pluginCatalogs?: readonly PersistedPluginModelCatalog[];
+  admittedProviderIds?: ReadonlySet<string>;
   staticProviderConfigs?: Readonly<Record<string, ModelProviderConfig>>;
   providerFilter?: string;
   pluginMetadataSnapshot?: PluginModelCatalogMetadataSnapshot;
@@ -67,6 +68,7 @@ function createOpenClawModelRegistry(
       ? { modelsJsonContents: options.modelsJsonContents }
       : {}),
     ...(options?.pluginCatalogs !== undefined ? { pluginCatalogs: options.pluginCatalogs } : {}),
+    admittedProviderIds: options?.admittedProviderIds,
     staticProviderConfigs: options?.staticProviderConfigs,
   };
   const registry = ModelRegistry.create(authStorage, modelsJsonPath, registryOptions);

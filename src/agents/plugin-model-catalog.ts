@@ -739,7 +739,7 @@ export function resolvePluginModelCatalogOwnerPluginId(params: {
 /** Keeps generated catalog providers only when the catalog plugin still owns them. */
 export function filterGeneratedPluginModelCatalogProviders<T>(params: {
   catalogPluginId?: string;
-  isProviderAvailable?: (providerId: string) => boolean;
+  admittedProviderIds?: ReadonlySet<string>;
   config?: OpenClawConfig;
   parsedCatalog?: unknown;
   pluginMetadataSnapshot?: PluginModelCatalogMetadataSnapshot;
@@ -769,13 +769,14 @@ export function filterGeneratedPluginModelCatalogProviders<T>(params: {
         }),
     ),
   );
-  // Captured auth, not the retained catalog's credentials, admits deferred inventory.
-  if (
-    plugin?.activation?.onStartup === false &&
-    params.isProviderAvailable &&
-    !Object.keys(providers).some(params.isProviderAvailable)
-  ) {
-    return {};
+  // The prepared admission owner, not retained catalog credentials, admits deferred inventory.
+  const admittedProviderIds = params.admittedProviderIds;
+  if (plugin?.activation?.onStartup === false && admittedProviderIds) {
+    return Object.fromEntries(
+      Object.entries(providers).filter(([provider]) =>
+        admittedProviderIds.has(normalizeProviderId(provider)),
+      ),
+    );
   }
   return providers;
 }

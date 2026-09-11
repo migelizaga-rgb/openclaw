@@ -1029,6 +1029,7 @@ describe("prepared model catalog worker boundary", () => {
         env: fixture.env,
         authStore,
         credentials: {},
+        admittedProviderIds: new Set([PROVIDER_ID]),
         providerIds: [PROVIDER_ID],
         configuredModelRefs: [],
         configuredRuntimeModels: [],

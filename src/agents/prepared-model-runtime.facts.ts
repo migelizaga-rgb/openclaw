@@ -122,22 +122,22 @@ function prepareAgentFacts(
     cfg: input.config,
     agentId: input.agentId,
   });
-  const admitted = includeCredentialProviders
-    ? resolveProviderUseAdmission({
-        config: input.config,
-        env,
-        profiles: authFacts.store.profiles,
-        requestedProviders,
-        storedCredentialAuthAliases: resolveProviderAuthAliasMap({
-          ...input,
-          storedCredential: true,
-        }),
-        nativeProviders: Object.entries(credentials).flatMap(([provider, credential]) =>
-          credential.type === "api_key" && credential.nativeAuth ? [provider] : [],
-        ),
-        providerEnvVars: resolveProviderBindingEnvVarCandidates({ ...input, env }),
-      }).keys()
-    : [];
+  const admittedProviderIds = new Set(
+    resolveProviderUseAdmission({
+      config: input.config,
+      env,
+      profiles: authFacts.store.profiles,
+      requestedProviders,
+      storedCredentialAuthAliases: resolveProviderAuthAliasMap({
+        ...input,
+        storedCredential: true,
+      }),
+      nativeProviders: Object.entries(credentials).flatMap(([provider, credential]) =>
+        credential.type === "api_key" && credential.nativeAuth ? [provider] : [],
+      ),
+      providerEnvVars: resolveProviderBindingEnvVarCandidates({ ...input, env }),
+    }).keys(),
+  );
   const templateAuthStorage = authFacts.authStorage;
   const rawConfiguredModelRefs = collectPreparedModelRuntimeConfiguredRefs(
     input.config,
@@ -149,6 +149,7 @@ function prepareAgentFacts(
     authStore: authFacts.store,
     templateAuthStorage,
     credentials,
+    admittedProviderIds,
     // Keep order and case-distinct refs: registry lookup remains exact-case even
     // where static/dynamic completion deduplicates case-insensitive merge keys.
     configuredModelRefs: rawConfiguredModelRefs.flatMap(({ value }) => {
@@ -162,7 +163,7 @@ function prepareAgentFacts(
         ...requestedProviders,
         ...collectPreparedModelRuntimeProviderIds(
           input.config,
-          admitted,
+          admittedProviderIds,
           includeCredentialProviders,
           rawConfiguredModelRefs,
           input.agentId,
@@ -654,6 +655,7 @@ function groupConfiguredRegistrySources(
       config: facts.input.config,
       sourceModels: projectConfigOntoRuntimeSourceSnapshot(facts.input.config).models,
       credentials: facts.credentials,
+      admittedProviderIds: [...facts.admittedProviderIds].toSorted(),
       modelsJsonContents,
       pluginCatalogs,
     });
@@ -701,6 +703,7 @@ export function prepareConfiguredRuntimeFactsBatch(params: {
         includePluginCatalogs: true,
         modelsJsonContents: group.modelsJsonContents,
         pluginCatalogs: group.pluginCatalogs,
+        admittedProviderIds: representative.admittedProviderIds,
         staticProviderConfigs,
         pluginMetadataSnapshot: params.pluginGeneration.pluginMetadataSnapshot,
         ...(representative.input.workspaceDir

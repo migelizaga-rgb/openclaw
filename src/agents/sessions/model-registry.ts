@@ -5,7 +5,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeResolvedPricing } from "@openclaw/llm-core";
-import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
@@ -24,10 +23,10 @@ import type {
 } from "../../llm/types.js";
 import type { OAuthProviderInterface } from "../../llm/utils/oauth/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { resolveProviderBindingEnvVarCandidates } from "../../secrets/provider-env-vars.js";
 import { normalizeOptionalSecretInput } from "../../utils/normalize-secret-input.js";
 import { getAgentDir } from "../config.js";
 import { sanitizeModelHeaders } from "../embedded-agent-runner/model.inline-provider.js";
-import { hasUsableCustomProviderApiKey } from "../model-auth-provider-config.js";
 import { parseModelCatalogJson } from "../model-catalog-json.js";
 import { modelTransportRoutesMatch } from "../model-compat-catalog.js";
 import { resolveModelPluginMetadataSnapshot } from "../model-discovery-context.js";
@@ -45,6 +44,7 @@ import {
   type PersistedPluginModelCatalog,
   type PluginModelCatalogMetadataSnapshot,
 } from "../plugin-model-catalog.js";
+import { resolveProviderUseAdmission } from "../provider-model-auth-source-plan.js";
 import { getAuthStorageOAuthProviderRegistry } from "./auth-storage-oauth-registry.js";
 import type { AuthStatus, AuthStorage } from "./auth-storage.js";
 import {
@@ -305,6 +305,8 @@ type ModelRegistryOptions = {
   includePluginCatalogs?: boolean;
   modelsJsonContents?: string | null;
   pluginCatalogs?: readonly PersistedPluginModelCatalog[];
+  /** Captured provider intent; an empty set overrides current credential availability. */
+  admittedProviderIds?: ReadonlySet<string>;
   staticProviderConfigs?: Readonly<Record<string, ModelProviderConfig>>;
   pluginMetadataSnapshot?: PluginModelCatalogMetadataSnapshot;
   sourceSnapshot?: ModelRegistry;
@@ -370,6 +372,7 @@ export class ModelRegistry {
   private modelsJsonPath: string | undefined;
   private modelsJsonContents: string | null | undefined;
   private pluginCatalogs: readonly PersistedPluginModelCatalog[] | undefined;
+  private admittedProviderIds: ReadonlySet<string> | undefined;
   private staticProviderConfigs: Readonly<Record<string, ModelProviderConfig>> | undefined;
   private pluginMetadataSnapshot: PluginModelCatalogMetadataSnapshot | undefined;
   private includePluginCatalogs = true;
@@ -406,6 +409,9 @@ export class ModelRegistry {
     this.modelsJsonPath = modelsJsonPath;
     this.modelsJsonContents = options.modelsJsonContents;
     this.pluginCatalogs = options.pluginCatalogs;
+    this.admittedProviderIds = options.admittedProviderIds
+      ? new Set(options.admittedProviderIds)
+      : undefined;
     this.staticProviderConfigs = options.staticProviderConfigs;
     this.pluginMetadataSnapshot = resolveModelPluginMetadataSnapshot({
       ...(options.pluginMetadataSnapshot
@@ -674,9 +680,26 @@ export class ModelRegistry {
           ? filterGeneratedPluginModelCatalogProviders({
               catalogPluginId: options.catalogPluginId,
               config: this.config,
-              isProviderAvailable: (providerId) =>
-                this.authStorage.hasAuth(normalizeProviderId(providerId)) ||
-                hasUsableCustomProviderApiKey(this.config, providerId),
+              admittedProviderIds:
+                this.admittedProviderIds ??
+                new Set(
+                  resolveProviderUseAdmission({
+                    config: this.config,
+                    profiles: Object.fromEntries(
+                      [
+                        ...this.authStorage.list(),
+                        ...Object.keys(config.providers).filter((provider) => {
+                          const source = this.authStorage.getAuthStatus(provider).source;
+                          return source === "runtime";
+                        }),
+                      ].map((provider) => [provider, { provider }]),
+                    ),
+                    providerEnvVars: resolveProviderBindingEnvVarCandidates({
+                      config: this.config,
+                      manifestPlugins: this.pluginMetadataSnapshot?.manifestRegistry?.plugins ?? [],
+                    }),
+                  }).keys(),
+                ),
               parsedCatalog: parsed,
               pluginMetadataSnapshot: this.pluginMetadataSnapshot,
               providers: config.providers,

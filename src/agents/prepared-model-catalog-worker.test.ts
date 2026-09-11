@@ -51,6 +51,7 @@ describe("prepared model catalog worker input", () => {
         env: {},
         authStore,
         credentials: { shared: { ...authStore.profiles["shared:named"] } },
+        admittedProviderIds: new Set(["shared"]),
         providerIds: ["configured"],
         configuredModelRefs: [],
         configuredRuntimeModels: [],

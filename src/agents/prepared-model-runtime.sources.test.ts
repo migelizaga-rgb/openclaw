@@ -7,7 +7,10 @@ import type { ModelDefinitionConfig, ModelProviderConfig } from "../config/types
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import type { PreparedProviderStaticCatalog } from "../plugins/provider-discovery.js";
-import { PLUGIN_MODEL_CATALOG_GENERATED_BY } from "./plugin-model-catalog.js";
+import {
+  PLUGIN_MODEL_CATALOG_GENERATED_BY,
+  replacePersistedPluginModelCatalogs,
+} from "./plugin-model-catalog.js";
 import type { PreparedModelRuntimeAgentFacts } from "./prepared-model-runtime.catalog-contract.js";
 import { prepareConfiguredRuntimeFactsBatch } from "./prepared-model-runtime.facts.js";
 import {
@@ -66,6 +69,7 @@ function fixture(mode: "merge" | "replace" = "merge") {
     env: {},
     authStore: { version: 1, profiles: {} },
     credentials: {},
+    admittedProviderIds: new Set([providerId]),
     templateAuthStorage: AuthStorage.inMemory({}),
     providerIds: [providerId],
     configuredModelRefs: [],
@@ -80,6 +84,50 @@ function fixture(mode: "merge" | "replace" = "merge") {
 }
 
 describe("prepared catalog source composition", () => {
+  it("keeps deferred membership separate for owners with different prepared admission", () => {
+    const { facts, generation } = fixture();
+    facts.input.config = {};
+    facts.configuredGeneratedCatalogPluginIds = [pluginId];
+    fs.writeFileSync(path.join(facts.input.agentDir, "models.json"), '{"providers":{}}');
+    replacePersistedPluginModelCatalogs({
+      agentDir: facts.input.agentDir,
+      pluginCatalogWrites: {
+        [`plugins/${pluginId}/catalog.json`]: JSON.stringify({
+          generatedBy: PLUGIN_MODEL_CATALOG_GENERATED_BY,
+          providers: {
+            [providerId]: {
+              api: "openai-completions",
+              baseUrl: endpoint,
+              models: [model("retained")],
+            },
+          },
+        }),
+      },
+    });
+    const sibling = {
+      ...facts,
+      input: { ...facts.input },
+      admittedProviderIds: new Set<string>(),
+    };
+    const result = prepareConfiguredRuntimeFactsBatch({
+      agentFacts: [facts, sibling],
+      pluginGeneration: {
+        ...generation,
+        preparedStaticProviderCatalog: { entries: [] },
+        pluginMetadataSnapshot: createPluginMetadataSnapshotFixture({
+          plugins: [{ id: pluginId, providers: [providerId], activation: { onStartup: false } }],
+        }),
+      },
+    });
+
+    expect(
+      result.catalogs.get(facts.input)!.templateModelRegistry.find(providerId, "retained"),
+    ).toBeDefined();
+    expect(
+      result.catalogs.get(sibling.input)!.templateModelRegistry.find(providerId, "retained"),
+    ).toBeUndefined();
+  });
+
   it("retains inherited catalogs and current request settings without custom model rows", async () => {
     const { facts, staticConfig } = fixture();
     const configPath = path.join(facts.input.agentDir, "openclaw.json");

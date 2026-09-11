@@ -119,6 +119,7 @@ async function createMismatchFixture() {
       env,
       authStore: { version: 1, profiles: {} },
       credentials: {},
+      admittedProviderIds: new Set([PROVIDER_ID]),
       providerIds: [PROVIDER_ID],
       configuredModelRefs: [],
       configuredRuntimeModels: [],

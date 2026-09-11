@@ -263,6 +263,7 @@ export async function runPreparedModelCatalogWorkerRequest(
     });
     const exactAgentFacts = {
       ...prepared.agentFacts,
+      admittedProviderIds: new Set(admitted.keys()),
       authStore,
       templateAuthStorage: AuthStorage.inMemory(credentials),
       credentials,

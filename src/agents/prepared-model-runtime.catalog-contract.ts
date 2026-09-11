@@ -18,6 +18,7 @@ export type PreparedModelRuntimeAgentBaseFacts = {
   authStore: AuthProfileStore;
   templateAuthStorage: AuthStorage;
   credentials: Readonly<AuthStorageData>;
+  admittedProviderIds: ReadonlySet<string>;
   providerIds: string[];
   configuredModelRefs: readonly ModelCatalogRef[];
 };
