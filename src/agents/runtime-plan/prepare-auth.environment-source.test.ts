@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Model } from "../../llm/types.js";
 import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
+import { createPluginCache, withPluginCache } from "../../plugins/plugin-cache.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import {
@@ -27,19 +28,6 @@ const model: Model = {
   maxTokens: 8_000,
 };
 
-const metadataSnapshot = createPluginMetadataSnapshotFixture({
-  plugins: [
-    {
-      id: "openai",
-      providers: ["openai"],
-      setup: {
-        requiresRuntime: false,
-        providers: [{ id: "openai", envVars: ["OPENAI_API_KEY"] }],
-      },
-    },
-  ],
-});
-
 describe("prepared environment credential identity", () => {
   afterEach(() => vi.unstubAllEnvs());
 
@@ -54,6 +42,21 @@ describe("prepared environment credential identity", () => {
       vi.stubEnv("CODEX_API_KEY", "other-account-key");
       const config: OpenClawConfig = {};
       const store: AuthProfileStore = { version: 1, profiles: {} };
+      await using cache = createPluginCache();
+      const metadataSnapshot = withPluginCache(cache, () =>
+        createPluginMetadataSnapshotFixture({
+          plugins: [
+            {
+              id: "openai",
+              providers: ["openai"],
+              setup: {
+                requiresRuntime: false,
+                providers: [{ id: "openai", envVars: ["OPENAI_API_KEY"] }],
+              },
+            },
+          ],
+        }),
+      );
 
       await withPluginMetadataSnapshotScope(
         metadataSnapshot,

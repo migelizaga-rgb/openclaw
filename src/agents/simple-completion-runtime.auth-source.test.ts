@@ -179,7 +179,7 @@ describe("simple completion current credential", () => {
                 current === "working" ? undefined : "current-completion:saved",
               );
             } finally {
-              lease.release();
+              await lease[Symbol.asyncDispose]();
             }
           } finally {
             await new Promise<void>((resolve, reject) => {

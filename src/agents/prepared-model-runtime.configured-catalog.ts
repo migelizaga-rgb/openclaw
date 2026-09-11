@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { stableStringify } from "@openclaw/normalization-core";
+import { extractErrorCode } from "@openclaw/normalization-core/error-coercion";
 import { projectConfigOntoRuntimeSourceSnapshot } from "../config/runtime-source-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { sha256Base64Url } from "../infra/crypto-digest.js";
@@ -95,7 +96,7 @@ export function prepareConfiguredRuntimeFacts(params: {
 }
 
 /** Startup can expose captured rows; full refresh overlays only configured membership. */
-export function prepareCapturedRuntimeFacts(
+function prepareCapturedRuntimeFacts(
   params: Parameters<typeof prepareConfiguredRuntimeFacts>[0],
 ): PreparedModelRuntimeCatalogFacts {
   const facts = prepareConfiguredRuntimeFacts(params);
@@ -123,7 +124,7 @@ export function captureModelsJsonContents(agentDir: string): string | null {
   try {
     return fs.readFileSync(path.join(agentDir, "models.json"), "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (extractErrorCode(error) === "ENOENT") {
       return null;
     }
     throw error;

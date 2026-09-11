@@ -225,7 +225,17 @@ it.each([false, true])(
     const resolve = createModelResolver();
     const preparing = parent.run(() =>
       acquireSimpleCompletionModel({
-        cfg: { models: { providers: { ollama: { apiKey: "local-fixture" } } } },
+        cfg: {
+          models: {
+            providers: {
+              ollama: {
+                apiKey: "local-fixture",
+                baseUrl: "http://127.0.0.1:11434",
+                models: [],
+              },
+            },
+          },
+        },
         agentId: "main",
         provider: "ollama",
         modelId: "fixture-model",

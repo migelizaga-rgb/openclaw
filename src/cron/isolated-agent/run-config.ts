@@ -5,6 +5,7 @@ import {
   getRuntimeConfigSourceSnapshot,
   selectApplicableRuntimeConfig,
 } from "../../config/config.js";
+import { copyConfigResolutionFacts } from "../../config/resolution-facts.js";
 import type { AgentDefaultsConfig } from "../../config/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 
@@ -69,12 +70,14 @@ export function resolveCronAgentConfig(params: {
     defaults: Object.assign({}, runtimeConfig.agents?.defaults, definedOverrides),
     overrideModel,
   });
+  const cfgWithAgentDefaults = {
+    ...runtimeConfig,
+    agents: Object.assign({}, runtimeConfig.agents, { defaults: agentDefaults }),
+  } satisfies OpenClawConfig;
+  copyConfigResolutionFacts(runtimeConfig, cfgWithAgentDefaults);
   return {
     runtimeConfig,
     agentDefaults,
-    cfgWithAgentDefaults: {
-      ...runtimeConfig,
-      agents: Object.assign({}, runtimeConfig.agents, { defaults: agentDefaults }),
-    } satisfies OpenClawConfig,
+    cfgWithAgentDefaults,
   };
 }

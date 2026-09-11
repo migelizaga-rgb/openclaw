@@ -8,6 +8,8 @@ import { resolveModelRuntimePolicy } from "../../agents/model-runtime-policy.js"
 import { resolveAllowedModelRefCore } from "../../agents/model-selection-resolve.js";
 import { resolveConfiguredThinkingDefault } from "../../agents/model-thinking-default.js";
 import type { ResolvedPublishedModelCatalogOwner } from "../../agents/prepared-model-catalog.types.js";
+import { prepareAgentRuntimeAuth } from "../../agents/runtime-plan/prepare-auth.js";
+import { setConfigProviderUseBindings } from "../../config/resolution-facts.js";
 import type { AgentModelEntryConfig } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
@@ -37,6 +39,92 @@ function resolveCronPayloadModel(cfg: OpenClawConfig, raw: string) {
 }
 
 describe("resolveCronAgentConfig model policy preservation", () => {
+  it.each([true, false])(
+    "preserves only approved startup bindings through cron payload selection (bound=%s)",
+    async (bound) => {
+      const config: OpenClawConfig = {
+        agents: {
+          defaults: { model: "fixture-base/chat" },
+          entries: { main: {} },
+        },
+      };
+      const sourceBefore = structuredClone(config);
+      if (bound) {
+        setConfigProviderUseBindings(config, {
+          "fixture-plan": {
+            apiKey: { source: "env", provider: "default", id: "FIXTURE_FAMILY_API_KEY" },
+          },
+        });
+      }
+      const metadataSnapshot = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "fixture-family",
+            providers: ["fixture-base", "fixture-plan"],
+            providerAuthAliases: { "fixture-plan": "fixture-base" },
+            setup: {
+              requiresRuntime: false,
+              providers: [{ id: "fixture-base", envVars: ["FIXTURE_FAMILY_API_KEY"] }],
+            },
+          },
+        ],
+      });
+      const owner: ResolvedPublishedModelCatalogOwner = {
+        catalogOwner: { agentId: "main", workspaceDir: "/tmp/cron-binding-workspace" },
+        agentId: "main",
+        agentDir: "/tmp/cron-binding-agent",
+        workspaceDir: "/tmp/cron-binding-workspace",
+        config,
+        observationConfig: config,
+        isCurrent: () => true,
+        authModes: {},
+        authStore: { version: 1, profiles: {} },
+        metadataSnapshot,
+        modelCatalog: {
+          entries: [{ provider: "fixture-plan", id: "chat", name: "Selected Plan" }],
+          routeVariants: [],
+        },
+      };
+      const selected = await resolveCronModelSelection({
+        cfg: config,
+        owner,
+        agentId: owner.agentId,
+        agentDir: owner.agentDir,
+        workspaceDir: owner.workspaceDir,
+        payload: { kind: "agentTurn", message: "scheduled work", model: "fixture-plan/chat" },
+        sessionEntry: {},
+        isGmailHook: false,
+      });
+      expect(selected).toMatchObject({
+        ok: true,
+        provider: "fixture-plan",
+        modelSource: "payload",
+      });
+      if (!selected.ok) {
+        throw new Error(selected.error);
+      }
+      const prepare = () =>
+        prepareAgentRuntimeAuth({
+          config: selected.cfgWithAgentDefaults,
+          provider: selected.provider,
+          modelId: selected.model,
+          env: { FIXTURE_FAMILY_API_KEY: "selected-account" },
+          authProfileStore: owner.authStore,
+          metadataSnapshot,
+          harnessId: "openclaw",
+        });
+      if (bound) {
+        expect(prepare().attempts).toMatchObject([
+          { kind: "direct", plan: { boundEnvVar: "FIXTURE_FAMILY_API_KEY" } },
+        ]);
+      } else {
+        expect(prepare).toThrow('Provider "fixture-plan" is not configured for model use');
+      }
+      expect(config).toEqual(sourceBefore);
+      expect(selected.cfgWithAgentDefaults.models).toBeUndefined();
+    },
+  );
+
   it.each<{ models: Record<string, AgentModelEntryConfig>; expectedRuntime: string }>([
     { models: {}, expectedRuntime: "openclaw" },
     { models: { "openai/other": { alias: "other" } }, expectedRuntime: "openclaw" },

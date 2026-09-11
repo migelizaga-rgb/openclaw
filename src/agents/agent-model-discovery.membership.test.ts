@@ -36,7 +36,9 @@ function readCatalog(authStorage: AuthStorage, modelsJsonContents: string | null
 describe("generated provider membership", () => {
   it("keeps prepared admission independent of a deferred catalog's cached key", async () => {
     const registry = ModelRegistry.create(AuthStorage.inMemory(), "captured:models.json", {
-      config: { models: { providers: { fixture: {} } } },
+      config: {
+        models: { providers: { fixture: { baseUrl: "https://fixture.example/v1", models: [] } } },
+      },
       modelsJsonContents: null,
       pluginCatalogs: [
         {
@@ -76,7 +78,9 @@ describe("generated provider membership", () => {
       fixture: { type: "api_key", key: "later-stored-key" },
     });
     const registry = ModelRegistry.create(auth, "captured:models.json", {
-      config: { models: { providers: { fixture: {} } } },
+      config: {
+        models: { providers: { fixture: { baseUrl: "https://fixture.example/v1", models: [] } } },
+      },
       modelsJsonContents: null,
       pluginCatalogs,
       pluginMetadataSnapshot: deferredMetadata,

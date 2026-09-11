@@ -1,9 +1,16 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
-import { prepareCapturedRuntimeFacts } from "./prepared-model-runtime.configured-catalog.js";
-import { AuthStorage, ModelRegistry } from "./sessions/index.js";
+import type { PreparedModelRuntimeAgentFacts } from "./prepared-model-runtime.catalog-contract.js";
+import { prepareConfiguredRuntimeFactsBatch } from "./prepared-model-runtime.configured-catalog.js";
+import type { PreparedModelRuntimePluginGeneration } from "./prepared-model-runtime.types.js";
+import { AuthStorage } from "./sessions/auth-storage.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("configured catalog registry composition", () => {
   it.each([
@@ -58,6 +65,7 @@ describe("configured catalog registry composition", () => {
   ] as const)(
     "keeps $mode rows and routes (captured=$capturedId at $capturedBaseUrl, pin=$pin)",
     ({ mode, capturedBaseUrl, capturedId, pin, expectedBaseUrl, expectedIds }) => {
+      const agentDir = tempDirs.make("openclaw-configured-catalog-");
       const configured: ModelCatalogEntry = {
         provider: "donor-fixture",
         id: "selected",
@@ -93,11 +101,9 @@ describe("configured catalog registry composition", () => {
           },
         },
       };
-      const registry = ModelRegistry.create(AuthStorage.inMemory({}), "captured:models.json", {
-        config,
-        includePluginCatalogs: false,
-        pluginMetadataSnapshot: metadataSnapshot,
-        modelsJsonContents: JSON.stringify({
+      fs.writeFileSync(
+        path.join(agentDir, "models.json"),
+        JSON.stringify({
           providers: {
             "donor-fixture": {
               api: "openai-completions",
@@ -123,22 +129,32 @@ describe("configured catalog registry composition", () => {
             },
           },
         }),
-      });
-      const agentFacts = {
-        input: { config },
+      );
+      const agentFacts: PreparedModelRuntimeAgentFacts = {
+        input: { config, agentDir },
+        env: {},
+        authStore: { version: 1, profiles: {} },
+        credentials: {},
+        admittedProviderIds: new Set(["donor-fixture"]),
+        templateAuthStorage: AuthStorage.inMemory({}),
+        providerIds: ["donor-fixture"],
         configuredModelRefs: [{ provider: "donor-fixture", modelId: "selected" }],
+        configuredRuntimeModels: [],
+        runtimeCapabilityModels: [],
+        configuredGeneratedCatalogPluginIds: [],
       };
-      const workspaceFacts = {
+      const pluginGeneration: PreparedModelRuntimePluginGeneration = {
         configuredCatalogEntries: [configured],
         pluginMetadataSnapshot: metadataSnapshot,
         inlineProviderModels: [],
+        providerStaticModels: [],
+        preparedStaticProviderCatalog: { entries: [] },
       };
-      const { modelCatalog } = prepareCapturedRuntimeFacts({
-        agentFacts,
-        workspaceFacts,
-        templateModelRegistry: registry,
-        configuredRuntimeModels: [],
+      const { catalogs } = prepareConfiguredRuntimeFactsBatch({
+        agentFacts: [agentFacts],
+        pluginGeneration,
       });
+      const { modelCatalog } = catalogs.get(agentFacts.input)!;
 
       expect(modelCatalog.entries.map((entry) => entry.id)).toEqual(expectedIds);
       expect(modelCatalog.entries[0]).toEqual({ ...configured, baseUrl: expectedBaseUrl });
