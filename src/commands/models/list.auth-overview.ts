@@ -227,8 +227,13 @@ export function resolveProviderAuthOverview(params: {
     if (params.serving && evaluation.environmentVariable) {
       return { kind: "env", detail: evaluation.environmentVariable };
     }
-    if (evaluation.evidence === "environment" && envValue) {
-      return { kind: "env", detail: envValue };
+    if (evaluation.evidence === "environment") {
+      if (params.serving) {
+        return { kind: "runtime", detail: "Gateway runtime auth" };
+      }
+      if (envValue) {
+        return { kind: "env", detail: envValue };
+      }
     }
     if (evaluation.evidence === "provider-config") {
       return params.serving

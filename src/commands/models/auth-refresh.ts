@@ -23,6 +23,7 @@ export async function readRunningGatewayModelAuthStatus(params: {
   agentId: string;
   agentDir: string;
 }): Promise<ModelAuthServingSnapshot | undefined> {
+  let connected = false;
   const result = await callGateway<ModelAuthStatusResult>({
     config: params.config,
     method: "models.authStatus",
@@ -30,8 +31,11 @@ export async function readRunningGatewayModelAuthStatus(params: {
     timeoutMs: 3000,
     requireLocalBackendSharedAuth: true,
     sharedStateMode: "read-only",
+    onHelloOk: () => {
+      connected = true;
+    },
   }).catch((error: unknown) => {
-    if (isGatewayClientRequestError(error) && error.gatewayCode === "UNAVAILABLE") {
+    if (connected || (isGatewayClientRequestError(error) && error.gatewayCode === "UNAVAILABLE")) {
       throw error;
     }
     return undefined;

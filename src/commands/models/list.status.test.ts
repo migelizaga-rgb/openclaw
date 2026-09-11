@@ -558,6 +558,41 @@ async function withOpenAIStatusFixture<T>(
 }
 
 describe("modelsStatusCommand auth overview", () => {
+  it("does not label an unnamed serving credential with a local environment hint", async () => {
+    mocks.readRunningGatewayModelAuthStatus.mockResolvedValueOnce({
+      agentId: "main",
+      agentDir: "/tmp/openclaw-agent",
+      models: [
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          availability: true,
+          requestedRuntimeId: "openclaw",
+          evidence: "environment",
+        },
+      ],
+    });
+    await withOpenAIStatusFixture(
+      {
+        primary: "openai/gpt-5.4",
+        utilityModel: "",
+        agentRuntime: "openclaw",
+        profiles: {},
+        resolveEnvApiKey: () => ({ apiKey: "local-account", source: "env: OPENAI_API_KEY" }),
+      },
+      async () => {
+        const statusRuntime = createTestRuntime();
+        await modelsStatusCommand({ json: true }, statusRuntime);
+        expect(parseFirstJsonLog(statusRuntime).auth.providers).toContainEqual(
+          expect.objectContaining({
+            provider: "openai",
+            effective: { kind: "runtime", detail: "Gateway runtime auth" },
+          }),
+        );
+      },
+    );
+  });
+
   it.each([true, false])(
     "uses serving readiness for a CLI runtime alias: %s",
     async (available) => {

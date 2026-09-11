@@ -58,6 +58,37 @@ function nativeOwner(complete: boolean, loggedIn: boolean, isCurrent = () => tru
 describe("captured model decisions", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("does not require a harness for a CLI backend registered only in the serving owner", () => {
+    const registry = createEmptyPluginRegistry();
+    registry.cliBackends.push({
+      pluginId: "captured-cli",
+      source: "fixture",
+      backend: {
+        id: "captured-fixture-cli",
+        modelProvider: "captured-fixture",
+        config: { command: "fixture-cli" },
+      },
+    });
+    const status = resolveCatalogDecisionRuntimeStatus({
+      cfg: {
+        agents: {
+          defaults: {
+            models: {
+              "captured-fixture/model": { agentRuntime: { id: "captured-fixture-cli" } },
+            },
+          },
+        },
+      },
+      agentId: "main",
+      entry: { provider: "captured-fixture", id: "model", name: "Fixture model" },
+      evaluation: { availability: true, selectedAuthMode: "api_key", routeResolution: null },
+      pluginRegistry: registry,
+    });
+    expect(status.runtime).toEqual({ id: "captured-fixture-cli", source: "model" });
+    expect(status.runtimeAvailability).toBeUndefined();
+    expect(status.runtimeIncompatibility).toBeUndefined();
+  });
+
   it("reports a missing serving harness separately from valid authentication", () => {
     const status = resolveCatalogDecisionRuntimeStatus({
       cfg: config,

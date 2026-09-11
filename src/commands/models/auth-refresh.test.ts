@@ -68,6 +68,17 @@ describe("readRunningGatewayModelAuthStatus", () => {
     await expect(readRunningGatewayModelAuthStatus(target)).resolves.toBeUndefined();
   });
 
+  it.each(["gateway timeout after 3000ms", "gateway closed (1006): connection lost"])(
+    "does not substitute local auth after connecting: %s",
+    async (message) => {
+      mocks.callGateway.mockImplementation(async ({ onHelloOk }: { onHelloOk?: () => void }) => {
+        onHelloOk?.();
+        throw new Error(message);
+      });
+      await expect(readRunningGatewayModelAuthStatus(target)).rejects.toThrow(message);
+    },
+  );
+
   it("does not replace unavailable serving preparation with a local auth guess", async () => {
     mocks.callGateway.mockResolvedValue({
       ts: 1,

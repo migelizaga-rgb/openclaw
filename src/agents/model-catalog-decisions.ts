@@ -480,7 +480,9 @@ export function resolveCatalogDecisionRuntimeStatus(
     runtimeAvailability:
       runtime &&
       runtime.id !== "openclaw" &&
-      !listCliRuntimeModelBackendBindings().some((binding) => binding.runtime === runtime.id)
+      !listCliRuntimeModelBackendBindings({ pluginRegistry: params.pluginRegistry }).some(
+        (binding) => binding.runtime === runtime.id,
+      )
         ? readAgentHarnessRuntimeAvailability({
             runtime: runtime.id,
             pluginRegistry: params.pluginRegistry,

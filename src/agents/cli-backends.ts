@@ -9,6 +9,7 @@ import type {
   CliBackendRuntimeArtifactPolicy,
 } from "../plugins/cli-backend.types.js";
 import { resolveRuntimeCliBackends } from "../plugins/cli-backends.runtime.js";
+import type { PluginRegistry } from "../plugins/registry-types.js";
 import {
   resolvePluginSetupCliBackend,
   resolvePluginSetupRegistry,
@@ -134,14 +135,18 @@ export function listCliRuntimeModelBackendBindings(
     config?: OpenClawConfig;
     env?: NodeJS.ProcessEnv;
     includeSetupRegistry?: boolean;
+    pluginRegistry?: Pick<PluginRegistry, "cliBackends">;
   } = {},
 ): CliRuntimeModelBackendBinding[] {
   const bindings = new Map<string, CliRuntimeModelBackendBinding>();
-  for (const backend of cliBackendsDeps.resolveRuntimeCliBackends()) {
-    addCliRuntimeModelBinding(bindings, {
-      backend,
-      ...(backend.pluginId ? { pluginId: backend.pluginId } : {}),
-    });
+  const runtimeBackends = params.pluginRegistry
+    ? params.pluginRegistry.cliBackends
+    : cliBackendsDeps.resolveRuntimeCliBackends().map((backend) => ({
+        backend,
+        pluginId: backend.pluginId,
+      }));
+  for (const entry of runtimeBackends) {
+    addCliRuntimeModelBinding(bindings, entry);
   }
   if (params.includeSetupRegistry === true) {
     for (const entry of cliBackendsDeps.resolvePluginSetupRegistry({

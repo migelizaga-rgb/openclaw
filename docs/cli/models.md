@@ -64,11 +64,13 @@ models. This preserves the distinction between a newly saved account and the
 credential that still serves a working route. Environment sources are identified
 by variable name; credential values are not fetched from the Gateway. Stored
 profile health remains a separate report.
+If the Gateway reports environment auth without a variable name, status shows
+`Gateway runtime auth`.
 
 Without an applicable Gateway, or with an older Gateway that does not report
 serving sources, status evaluates the local configuration. `--probe` always uses
-the local probe path. A Gateway that cannot currently prepare its auth status
-returns an error instead of substituting a local source.
+the local probe path. If a connected Gateway cannot prepare or return its auth
+status, the command reports an error instead of substituting a local source.
 
 #### Read status correctly
 
