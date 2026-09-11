@@ -155,12 +155,22 @@ export function registerPreActionHooks(program: Command, programVersion: string)
     const machineOutputMode = jsonOutputMode || isModelsPlainMachineOutput(argv, actionCommand);
     applyResolvedCommandOutputMode(jsonOutputMode, machineOutputMode);
     const commandPath = getCommanderCommandPath(actionCommand);
+    // Only Commander-parsed check actions may bypass stateful startup. The
+    // early, unparsed run-main policy cannot infer this from raw option tokens.
+    const nativeUpdateExecutorCheck =
+      commandPath.length === 2 &&
+      (commandPath[0] === "gateway" || commandPath[0] === "daemon") &&
+      ["install", "restart", "stop"].includes(commandPath[1] ?? "") &&
+      actionCommand.args.length === 0 &&
+      actionCommand.getOptionValueSource("updateExecutor") === "cli" &&
+      actionCommand.getOptionValue("updateExecutor") === "check";
     const startupPolicy = resolveCliStartupPolicy({
       argv,
       commandPath,
       jsonOutputMode,
       machineOutputMode,
       env: process.env,
+      nativeUpdateExecutorCheck,
     });
     await applyCliExecutionStartupPresentation({
       startupPolicy,
@@ -176,6 +186,9 @@ export function registerPreActionHooks(program: Command, programVersion: string)
       process.env.NODE_NO_WARNINGS ??= "1";
     }
     if (isGuidedConfigAction(actionCommand) || isGuidedConfigCommandPath(commandPath)) {
+      return;
+    }
+    if (nativeUpdateExecutorCheck) {
       return;
     }
     await runStateStoreGuard(commandPath);
