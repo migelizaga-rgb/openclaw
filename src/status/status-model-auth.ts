@@ -2,13 +2,16 @@ import { resolveAuthProfileDisplayLabel } from "../agents/auth-profiles.js";
 import { resolveModelAuthLabel } from "../agents/model-auth-label.js";
 import { createModelCatalogDecisions } from "../agents/model-catalog-decisions.js";
 import { findModelInCatalog } from "../agents/model-catalog-lookup.js";
-import { getPreparedModelRuntimeAuthStore } from "../agents/prepared-model-runtime-auth.js";
+import {
+  getPreparedModelRuntimeAuthStore,
+  getPreparedModelRuntimePreferredAuthSource,
+} from "../agents/prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "../agents/prepared-model-runtime.types.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isUserModelAuthProfileId } from "../state/user-model-account-id.js";
 
-/** Native status uses the same prepared account and route as model selection. */
+/** Status uses the same prepared account and route as model selection. */
 export function createStatusModelAuthResolver(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -33,9 +36,12 @@ export function createStatusModelAuthResolver(params: {
           pluginRegistry: owner.pluginRegistry,
           observationConfig: owner.observationConfig,
           isCurrent: owner.isCurrent,
+          preferredAuthSource: (provider, modelId) =>
+            getPreparedModelRuntimePreferredAuthSource(owner, provider, modelId),
           preferredProfileId: sessionEntry?.authProfileOverride,
           pinnedProfileId:
-            sessionEntry?.authProfileOverrideSource === "user"
+            sessionEntry?.authProfileOverrideSource === "user" ||
+            sessionEntry?.authProfileOverrideSource === "user-link"
               ? sessionEntry.authProfileOverride
               : undefined,
           profileProvider: sessionEntry?.providerOverride ?? sessionEntry?.modelProvider,
@@ -49,14 +55,8 @@ export function createStatusModelAuthResolver(params: {
   }): Promise<string | undefined> => {
     const { provider, model, runtimeId } = selection;
     // SDK renderers without a prepared owner retain host-profile diagnostics.
-    // A native observation, when present, never falls back to a different account.
-    if (
-      !owner ||
-      !runtimeId ||
-      runtimeId === "openclaw" ||
-      runtimeId === "auto" ||
-      provider === runtimeId
-    ) {
+    // A prepared observation never falls back to a different account.
+    if (!owner) {
       return resolveModelAuthLabel({
         provider,
         acceptedProviderIds: selection.acceptedProviderIds,
@@ -79,11 +79,14 @@ export function createStatusModelAuthResolver(params: {
       variants.length ? variants : entry ? [entry] : undefined,
       runtimeId,
     );
-    const evaluation = entry ? decisions.evaluateNative(entry, host, runtimeId) : host;
+    const nativeRuntime =
+      runtimeId && runtimeId !== "openclaw" && runtimeId !== "auto" && provider !== runtimeId;
+    const evaluation =
+      entry && nativeRuntime ? decisions.evaluateNative(entry, host, runtimeId) : host;
     if (!decisions.isCurrent() || evaluation.availability !== true) {
       return "unknown";
     }
-    if (evaluation.runtimeAuth && evaluation.runtimeAuth.id !== runtimeId) {
+    if (runtimeId && evaluation.runtimeAuth && evaluation.runtimeAuth.id !== runtimeId) {
       return "unknown";
     }
     const mode =
@@ -95,8 +98,11 @@ export function createStatusModelAuthResolver(params: {
         : resolveAuthProfileDisplayLabel({ cfg: params.cfg, store: authStore, profileId });
       return mode ? mode + (label ? " (" + label + ")" : "") : "unknown";
     }
+    if (evaluation.environmentVariable) {
+      return `${mode ?? "unknown"} (env: ${evaluation.environmentVariable})`;
+    }
     return evaluation.runtimeAuth
-      ? (mode ?? "native") + " (" + runtimeId + ")"
+      ? (mode ?? "native") + " (" + evaluation.runtimeAuth.id + ")"
       : (mode ?? "unknown");
   };
 }

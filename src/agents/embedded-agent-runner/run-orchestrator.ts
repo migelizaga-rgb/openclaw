@@ -45,6 +45,7 @@ import { createAssistantErrorTranscript } from "../assistant-error-transcript.js
 import { runBestEffortCallback } from "../embedded-agent-subscribe.callback.js";
 import { resolveLegacyInheritedAuthDir } from "../legacy-inherited-auth-dir.js";
 import { resolveModelCandidateChain } from "../model-fallback-candidates.js";
+import { copyPreparedModelRuntimeAuthBindings } from "../prepared-model-runtime-auth.js";
 import {
   getPreparedModelRuntimePluginGeneration,
   withPreparedModelRuntimePluginGenerationScope,
@@ -393,6 +394,10 @@ async function runEmbeddedAgentInternal(
             projectKey,
             activeProjectKeys,
           });
+          copyPreparedModelRuntimeAuthBindings(
+            preparedModelRuntimeOwnerSnapshot,
+            preparedModelRuntime,
+          );
           const runPrepared = async () => {
             const preparedAgentId = workspaceResolution.agentId;
             const resolvedWorkspace = workspaceResolution.workspaceDir;

@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreparedAgentCredentialMode } from "../agents/agent-auth-credential-modes.js";
+import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import { dualRoutes } from "../agents/model-auth-availability.test-support.js";
 import * as openaiRoutes from "../agents/openai-model-routes.js";
-import { setPreparedModelRuntimeAuthStore } from "../agents/prepared-model-runtime-auth.js";
+import {
+  bindModelRuntimeAuthSources,
+  prepareModelRuntimeAuthSources,
+  recordPreparedModelRuntimeAuthSource,
+  retainModelRuntimeAuthSourcesAfterMutation,
+  setPreparedModelRuntimeAuthStore,
+} from "../agents/prepared-model-runtime-auth.js";
 import type { PreparedModelRuntimeSnapshot } from "../agents/prepared-model-runtime.types.js";
+import type { ProviderModelAuthSource } from "../agents/provider-model-auth-source-plan.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
@@ -26,12 +34,16 @@ function statusAuth(
     current?: () => boolean;
     sessionEntry?: SessionEntry;
     config?: OpenClawConfig;
+    provider?: string;
+    authStore?: AuthProfileStore;
+    retainedSource?: ProviderModelAuthSource;
     nativeDiscovery?: { accountType: string; authMode?: string };
   } = {},
 ) {
   const config = options.config ?? cfg;
+  const provider = options.provider ?? "openai";
   const entry = {
-    provider: "openai",
+    provider,
     id: "gpt-5.4",
     name: "GPT",
     ...(options.nativeDiscovery ? { nativeRuntime: "codex" } : {}),
@@ -64,7 +76,14 @@ function statusAuth(
     activeProjectKeys: [],
     authModes: mode ? { codex: mode } : {},
     metadataSnapshot: createPluginMetadataSnapshotFixture({
-      plugins: [{ id: "codex", providers: ["codex"], syntheticAuthRefs: ["codex"] }],
+      plugins: [
+        { id: "codex", providers: ["codex"], syntheticAuthRefs: ["codex"] },
+        {
+          id: "fixture-api",
+          providers: ["fixture-api"],
+          setup: { providers: [{ id: "fixture-api", envVars: ["FIXTURE_API_KEY"] }] },
+        },
+      ],
     }),
     isCurrent: options.current ?? (() => true),
     allowGatewaySubagentBinding: false,
@@ -75,7 +94,13 @@ function statusAuth(
       throw new Error("Status must not execute a model");
     },
   };
-  setPreparedModelRuntimeAuthStore(owner, { version: 1, profiles: {} });
+  setPreparedModelRuntimeAuthStore(owner, options.authStore ?? { version: 1, profiles: {} });
+  if (options.retainedSource) {
+    prepareModelRuntimeAuthSources(owner, undefined, owner);
+    bindModelRuntimeAuthSources(owner, owner);
+    recordPreparedModelRuntimeAuthSource(owner, provider, entry.id, options.retainedSource, false);
+    retainModelRuntimeAuthSourcesAfterMutation(owner);
+  }
   return createStatusModelAuthResolver({
     cfg: config,
     agentId: "main",
@@ -142,18 +167,21 @@ describe("native status authentication", () => {
     ).toBe("unknown");
   });
 
-  it("does not substitute native login for an unavailable explicit profile", async () => {
-    const sessionEntry: SessionEntry = {
-      sessionId: "status-pin",
-      updatedAt: 1,
-      authProfileOverride: "openai:missing",
-      authProfileOverrideSource: "user",
-      modelProvider: "openai",
-    };
-    expect(
-      await statusAuth({ source: "native", mode: "api_key" }, { sessionEntry })(selection),
-    ).toBe("unknown");
-  });
+  it.each(["user", "user-link"] as const)(
+    "does not substitute native login for an unavailable %s profile",
+    async (authProfileOverrideSource) => {
+      const sessionEntry: SessionEntry = {
+        sessionId: "status-pin",
+        updatedAt: 1,
+        authProfileOverride: "openai:missing",
+        authProfileOverrideSource,
+        modelProvider: "openai",
+      };
+      expect(
+        await statusAuth({ source: "native", mode: "api_key" }, { sessionEntry })(selection),
+      ).toBe("unknown");
+    },
+  );
 
   it("respects an explicitly empty account order", async () => {
     expect(
@@ -165,4 +193,54 @@ describe("native status authentication", () => {
       )(selection),
     ).toBe("unknown");
   });
+});
+
+describe("status authentication for a running host route", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["new account", "expired account"] as const)(
+    "reports the serving environment credential beside a %s",
+    async (account) => {
+      vi.stubEnv("FIXTURE_API_KEY", "fake-environment-account");
+      const resolve = statusAuth(undefined, {
+        provider: "fixture-api",
+        config: {
+          models: {
+            providers: { "fixture-api": { baseUrl: "https://fixture.invalid", models: [] } },
+          },
+        },
+        authStore: {
+          version: 1,
+          profiles: {
+            "fixture-api:saved": {
+              provider: "fixture-api",
+              type: "token",
+              token: "fake-saved-account",
+              expires: account === "expired account" ? 1 : Date.now() + 60_000,
+            },
+          },
+        },
+        ...(account === "new account"
+          ? {
+              retainedSource: {
+                kind: "direct",
+                mode: "api-key",
+                readiness: "ready",
+                evidence: "environment",
+                authorization: "ambient",
+                boundEnvVar: "FIXTURE_API_KEY",
+              },
+            }
+          : {}),
+      });
+      expect(
+        await resolve({
+          provider: "fixture-api",
+          model: "gpt-5.4",
+          runtimeId: "openclaw",
+          acceptedProviderIds: ["fixture-api"],
+        }),
+      ).toBe("api-key (env: FIXTURE_API_KEY)");
+    },
+  );
 });

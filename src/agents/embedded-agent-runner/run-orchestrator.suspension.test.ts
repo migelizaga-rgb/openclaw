@@ -9,8 +9,15 @@ import {
   loadSessionEntryReadOnly as loadSessionEntry,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { saveAuthProfileStore } from "../auth-profiles/store-runtime.js";
+import {
+  bindModelRuntimeAuthSources,
+  prepareModelRuntimeAuthSources,
+  retainModelRuntimeAuthSourcesAfterMutation,
+} from "../prepared-model-runtime-auth.js";
 import {
   runWithDeferredSessionSuspension,
   suspendSession,
@@ -180,6 +187,75 @@ function failAttempt(stage: "prompt" | "assistant", sessionId: string) {
 }
 
 describe("embedded run detached session metadata", () => {
+  it("keeps the successful automatic credential after an account is saved between ordinary runs", async () => {
+    const { params } = await createRun("main");
+    const provider = params.config.models?.providers?.openai;
+    if (!provider) {
+      throw new Error("Expected the configured provider fixture");
+    }
+    delete provider.apiKey;
+    vi.stubEnv("OPENAI_API_KEY", "environment-account-b");
+    const authPreparation = await import("../runtime-plan/prepare-auth.js");
+    const actualAuthPreparation = await vi.importActual<typeof authPreparation>(
+      "../runtime-plan/prepare-auth.js",
+    );
+    vi.spyOn(authPreparation, "prepareAgentRuntimeAuth").mockImplementation(
+      actualAuthPreparation.prepareAgentRuntimeAuth,
+    );
+    const acquire = vi.mocked(acquireRuntime).getMockImplementation();
+    if (!acquire) {
+      throw new Error("Expected the prepared-runtime fixture");
+    }
+    const owner = {};
+    prepareModelRuntimeAuthSources(owner, undefined, params);
+    const metadataSnapshot = createPluginMetadataSnapshotFixture({
+      plugins: [
+        {
+          id: "openai",
+          providers: ["openai"],
+          setup: {
+            requiresRuntime: false,
+            providers: [{ id: "openai", envVars: ["OPENAI_API_KEY"] }],
+          },
+        },
+      ],
+    });
+    const acquireBound: typeof acquireRuntime = async (...args) => {
+      const lease = await acquire(...args);
+      const snapshot = { ...lease.snapshot, metadataSnapshot };
+      bindModelRuntimeAuthSources(owner, snapshot);
+      return { ...lease, snapshot };
+    };
+    vi.mocked(acquireRuntime)
+      .mockImplementationOnce(acquireBound)
+      .mockImplementationOnce(acquireBound);
+    const credentials: Array<string | undefined> = [];
+    runAttempt.mockImplementation(async (attempt) => {
+      credentials.push(attempt.resolvedApiKey);
+      return successfulAttempt(params.sessionId);
+    });
+    await expect(runEmbeddedAgent(params)).resolves.toMatchObject({
+      payloads: [{ text: "Verified." }],
+    });
+    expect(credentials).toEqual(["environment-account-b"]);
+    saveAuthProfileStore(
+      {
+        version: 1,
+        profiles: {
+          "openai:saved": { type: "api_key", provider: "openai", key: "saved-account-a" },
+        },
+      },
+      params.agentDir,
+    );
+    retainModelRuntimeAuthSourcesAfterMutation(owner);
+    await expect(
+      runEmbeddedAgent({ ...params, runId: "after-account-save" }),
+    ).resolves.toMatchObject({
+      payloads: [{ text: "Verified." }],
+    });
+    expect(credentials).toEqual(["environment-account-b", "environment-account-b"]);
+  });
+
   it("suspends the canonical agent selected during prepared-runtime acquisition", async () => {
     const { params, scope } = await createRun("main");
     // Global keys have an explicit owner but no agent prefix to contradict a rebind.

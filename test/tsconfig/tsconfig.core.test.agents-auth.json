@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.core.test.shard.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "../../.artifacts/tsgo-cache/core-test-agents-auth.tsbuildinfo"
+  },
+  "include": [
+    "../../src/agents/model-auth*.test.ts",
+    "../../src/agents/model-auth*.test.tsx",
+    "../../src/agents/provider-model*.test.ts",
+    "../../src/agents/provider-model*.test.tsx",
+    "../../src/agents/prepared-model-runtime-auth*.test.ts",
+    "../../src/agents/prepared-model-runtime-auth*.test.tsx",
+    "../../src/agents/auth-health.test.ts",
+    "../../src/agents/auth-profiles/**/*.test.ts",
+    "../../src/agents/auth-profiles/**/*.test.tsx",
+    "../../src/agents/runtime-plan/**/*.test.ts",
+    "../../src/agents/runtime-plan/**/*.test.tsx"
+  ]
+}

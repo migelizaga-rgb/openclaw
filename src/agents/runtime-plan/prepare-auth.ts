@@ -16,6 +16,7 @@ import {
   resolveAuthProfileOrderWithMetadata,
 } from "../auth-profiles/order.js";
 import { createSelectedAuthProfileUnavailableError } from "../auth-profiles/selection-error.js";
+import { isSetupCredentialAccessActive } from "../auth-profiles/setup-access.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { isProfileInCooldown } from "../auth-profiles/usage-state.js";
 import {
@@ -236,7 +237,11 @@ export function prepareAgentRuntimeAuth(
     providerEnvVars,
   }).bindings.get(normalizeProviderId(authProfileSelectionProvider));
   const directUseBinding =
-    providerUseBinding?.kind === "profile" ? environmentBinding : providerUseBinding;
+    providerUseBinding?.kind === "profile"
+      ? isSetupCredentialAccessActive()
+        ? undefined
+        : environmentBinding
+      : providerUseBinding;
   if (userPinnedProfileId) {
     const eligibility = store
       ? resolveAuthProfileEligibility({

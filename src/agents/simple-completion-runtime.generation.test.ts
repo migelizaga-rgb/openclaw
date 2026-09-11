@@ -1,10 +1,11 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { createApiRegistry } from "@openclaw/ai";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Model } from "../llm/types.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { AsyncWorkScope } from "../shared/async-work-scope.js";
 import { createDeferredCore } from "../shared/deferred.js";
+import * as authProfileRuntime from "./auth-profiles/store-runtime.js";
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 import type { SimpleCompletionModelResolver } from "./simple-completion-scope.js";
@@ -40,10 +41,6 @@ vi.mock("../plugins/runtime/generation-scope.js", async () => {
   };
 });
 
-vi.mock("./auth-profiles/store-runtime.js", () => ({
-  ensureAuthProfileStore: mocks.ensureAuthProfileStore,
-}));
-
 vi.mock("./model-auth.js", () => ({
   applySecretRefHeaderSentinels: (model: Model) => model,
   applyLocalNoAuthHeaderOverride: (model: Model) => model,
@@ -70,13 +67,13 @@ import {
   acquireSimpleCompletionModelForAgent,
 } from "./simple-completion-runtime.js";
 
-function createOllamaModelResolver(): SimpleCompletionModelResolver {
+function createModelResolver(): SimpleCompletionModelResolver {
   return vi.fn(async (provider, modelId, _agentDir, _cfg, options) => ({
     model: {
       provider,
       id: modelId,
       name: modelId,
-      api: "ollama",
+      api: provider === "openai" ? "openai-completions" : "ollama",
       baseUrl: "http://127.0.0.1:11434",
       reasoning: false,
       input: ["text"],
@@ -92,6 +89,9 @@ function createOllamaModelResolver(): SimpleCompletionModelResolver {
 let preparedModelRuntime: PreparedModelRuntimeSnapshot & { testGeneration: string };
 
 beforeEach(() => {
+  vi.spyOn(authProfileRuntime, "ensureAuthProfileStore").mockImplementation(
+    mocks.ensureAuthProfileStore,
+  );
   mocks.publishedGeneration = "A";
   mocks.acquireRuntimeLease.mockReset();
   mocks.disposeRuntime.mockReset();
@@ -125,6 +125,8 @@ beforeEach(() => {
     [Symbol.asyncDispose]: mocks.disposeRuntime,
   });
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 it("keeps route rematerialization and runtime auth on the supplied generation", async () => {
   const observedModelGenerations: string[] = [];
@@ -223,7 +225,7 @@ it.each([false, true])(
     const resolve = createOllamaModelResolver();
     const preparing = parent.run(() =>
       acquireSimpleCompletionModel({
-        cfg: {},
+        cfg: { models: { providers: { ollama: { apiKey: "local-fixture" } } } },
         agentId: "main",
         provider: "ollama",
         modelId: "fixture-model",
@@ -265,7 +267,7 @@ it.each([false, true])(
 );
 
 it("acquires direct completion runtime for the exact selected model", async () => {
-  const modelResolver = createOllamaModelResolver();
+  const modelResolver = createModelResolver();
   mocks.getApiKeyForModel.mockResolvedValue({
     apiKey: "ollama-local",
     source: "local marker",
@@ -306,7 +308,7 @@ it("acquires direct completion runtime for the exact selected model", async () =
 });
 
 it("selects an explicit agent completion model before runtime acquisition", async () => {
-  const modelResolver = createOllamaModelResolver();
+  const modelResolver = createModelResolver();
   mocks.getApiKeyForModel.mockResolvedValue({
     apiKey: "ollama-local",
     source: "local marker",
@@ -421,7 +423,7 @@ it.each(["/", "entry"])(
       snapshot: preparedModelRuntime,
       [Symbol.asyncDispose]: release,
     });
-    const resolveModel = createOllamaModelResolver();
+    const resolveModel = createModelResolver();
     const modelResolver: SimpleCompletionModelResolver = async (...args) => {
       const resolved = await resolveModel(...args);
       return args[1] === "middle"
@@ -429,13 +431,25 @@ it.each(["/", "entry"])(
         : { ...resolved, model: undefined, error: `Unexpected selected model: ${args[1]}` };
     };
     const result = await acquireSimpleCompletionModelForAgent({
-      cfg: { agents: { entries: { main: {} }, defaults: { model: "entry" } } },
+      cfg: {
+        agents: { entries: { main: {} }, defaults: { model: "entry" } },
+        models: {
+          providers: {
+            openai: {
+              apiKey: "fake-openai-key",
+              baseUrl: "http://127.0.0.1:11434",
+              models: [],
+            },
+          },
+        },
+      },
       agentId: "main",
       modelRef,
       modelResolver,
     });
 
     try {
+      expect(result).not.toHaveProperty("error");
       expect(result).toMatchObject({
         selection: { provider: "openai", modelId: "middle" },
         model: { provider: "openai", id: "middle", contextWindow: 8192 },

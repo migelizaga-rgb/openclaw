@@ -96,7 +96,7 @@ export function resolveProviderConfig(
   return resolveMergedModelProviderEntry(cfg, provider)?.providerConfig;
 }
 
-export function resolveProviderSourceConfig(cfg: OpenClawConfig | undefined, provider: string) {
+function resolveProviderSourceConfig(cfg: OpenClawConfig | undefined, provider: string) {
   const source = providerConfigMatchesRuntimeSnapshot({
     inputConfig: cfg,
     runtimeConfig: getRuntimeConfigSnapshot(),

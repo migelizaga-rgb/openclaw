@@ -527,26 +527,46 @@ describe("prepared model catalog access", () => {
   });
 
   it("resolves a complete published owner for runtime consumers", async () => {
+    let current = true;
+    const isCurrent = () => current;
+    const source = {
+      kind: "profile" as const,
+      profileId: "test:saved",
+      readiness: "ready" as const,
+      cooldown: "clear" as const,
+    };
+    const preferredAuthSource = vi.fn((_provider: string, _modelId: string) => source);
     const committedSnapshot = {
       ...fullSnapshot,
       agentDir: "/tmp/prepared-model-catalog-agent",
       config: { agents: { list: [{ id: "main", default: true }] } },
+      observationConfig: {},
+      isCurrent,
+      preferredAuthSource,
     };
     mocks.prepareSnapshot.mockResolvedValue(committedSnapshot);
 
-    await expect(
-      loadResolvedPublishedModelCatalogOwner({ agentId: "MAIN", readOnly: true }),
-    ).resolves.toEqual({
+    const owner = await loadResolvedPublishedModelCatalogOwner({ agentId: "MAIN", readOnly: true });
+    expect(owner).toEqual({
       catalogOwner: fullSnapshot.catalogOwner,
       agentId: "main",
       agentDir: "/tmp/prepared-model-catalog-agent",
       workspaceDir: "/tmp/prepared-model-catalog-workspace",
       config: committedSnapshot.config,
+      observationConfig: committedSnapshot.observationConfig,
+      pluginRegistry: undefined,
+      isCurrent,
+      preferredAuthSource,
       authModes: {},
       authStore: { version: 1, profiles: {} },
       metadataSnapshot: fullSnapshot.metadataSnapshot,
       modelCatalog: committedSnapshot.modelCatalog,
     });
+    expect(owner.preferredAuthSource?.("test", "model")).toBe(source);
+    expect(preferredAuthSource).toHaveBeenCalledExactlyOnceWith("test", "model");
+    expect(owner.isCurrent()).toBe(true);
+    current = false;
+    expect(owner.isCurrent()).toBe(false);
   });
 
   it("keeps a shared-directory published replacement owner ambiguous", async () => {
