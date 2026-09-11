@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildOpenAICompatibleProviderFamilyCatalog } from "../plugin-sdk/provider-catalog-live-runtime.js";
-import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
-import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
-import type { ProviderPlugin } from "../plugins/types.js";
+import { buildOpenAICompatibleProviderFamilyCatalog } from "../../plugin-sdk/provider-catalog-live-runtime.js";
+import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
+import type { ProviderPlugin } from "../../plugins/types.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
-} from "../test-utils/openclaw-test-state.js";
-import { MODELS_CONFIG_IMPLICIT_ENV_VARS } from "./models-config.e2e-harness.js";
+} from "../../test-utils/openclaw-test-state.js";
+import { MODELS_CONFIG_IMPLICIT_ENV_VARS } from "../models-config.e2e-harness.js";
 
 const mocks = vi.hoisted(() => ({
   resolveRuntimePluginDiscoveryProviders: vi.fn(),
   runProviderCatalog: vi.fn(),
   runProviderStaticCatalog: vi.fn(),
 }));
-vi.mock("../plugins/provider-discovery.js", () => ({
+vi.mock("../../plugins/provider-discovery.js", () => ({
   resolveRuntimePluginDiscoveryProviders: mocks.resolveRuntimePluginDiscoveryProviders,
   runProviderCatalog: mocks.runProviderCatalog,
   runProviderStaticCatalog: mocks.runProviderStaticCatalog,
@@ -31,7 +31,7 @@ vi.mock("../plugins/provider-discovery.js", () => ({
     result?: { providers?: Record<string, unknown> } | null;
   }) => result?.providers ?? {},
 }));
-import { resolveImplicitProviders } from "./models-config.providers.implicit.js";
+import { resolveImplicitProviders } from "../models-config.providers.implicit.js";
 
 function createProvider(id: string): ProviderPlugin {
   return { id, label: id, auth: [], catalog: { order: "simple", run: async () => null } };
