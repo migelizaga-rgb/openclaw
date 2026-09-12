@@ -3,22 +3,11 @@ import { html } from "lit";
 import { routePageSpec } from "../../app-route-paths.ts";
 import type { ApplicationContext } from "../../app/context.ts";
 import { formatUiError } from "../../lib/format-error.ts";
-import {
-  formatMissingOperatorReadScopeMessage,
-  isMissingOperatorReadScopeError,
-} from "../../lib/gateway-errors.ts";
 import type { UsageRouteData } from "./usage-page.ts";
 
 function currentLocalDate(): string {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function errorMessage(error: unknown): string {
-  if (isMissingOperatorReadScopeError(error)) {
-    return formatMissingOperatorReadScopeMessage("usage");
-  }
-  return formatUiError(error, "request failed");
 }
 
 async function loadUsageRouteData(
@@ -49,43 +38,10 @@ async function loadUsageRouteData(
     return pending;
   }
 
-  try {
-    const { providerUsageFromSnapshotResult, requestUsageSnapshot } =
-      await import("./request-usage-snapshot.ts");
-    // Loading can outlive the route, selected scope, or Gateway transport.
-    // Preserve the admission snapshot and never start requests for a retired owner.
-    const current = gateway.snapshot;
-    if (
-      !options.shouldRun() ||
-      current.phase !== "connected" ||
-      current.client !== gatewaySnapshot.client ||
-      current.hello !== gatewaySnapshot.hello ||
-      context.agentSelection.state.scopeId !== query.agentId
-    ) {
-      return pending;
-    }
-    const snapshot = await requestUsageSnapshot(
-      gatewaySnapshot.client,
-      { ...query, agentId: query.agentId ?? undefined },
-      options.signal,
-    );
-    if (snapshot.ok) {
-      return {
-        ...pending,
-        result: snapshot.value.result,
-        costSummary: snapshot.value.costSummary,
-        providerUsage: snapshot.value.providerUsage,
-        loadedAtMs: Date.now(),
-      };
-    }
-    return {
-      ...pending,
-      providerUsage: providerUsageFromSnapshotResult(snapshot),
-      error: errorMessage(snapshot.error.cause),
-    };
-  } catch (error) {
-    return { ...pending, error: errorMessage(error) };
-  }
+  return import("./route-loader.ts").then(
+    ({ loadUsageRoute }) => loadUsageRoute(context, options, pending),
+    (error: unknown) => ({ ...pending, error: formatUiError(error, "request failed") }),
+  );
 }
 
 export const page = definePage({
