@@ -24,6 +24,7 @@ export type EnvApiKeyResult = {
 type ProviderEnvAuthEvidence = {
   mode: "api-key" | "aws-sdk" | "oauth";
   source: string;
+  environmentVariable?: string;
 };
 
 /** Secret-free direct-auth fact retained for runtime credential resolution. */
@@ -87,6 +88,7 @@ export function resolveProviderEnvAuthEvidence(
     return {
       mode,
       source: applied.has(envVar) ? `shell env: ${envVar}` : `env: ${envVar}`,
+      environmentVariable: envVar,
     };
   }
 

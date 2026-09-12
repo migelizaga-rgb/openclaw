@@ -8,6 +8,7 @@ import {
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createModelAuthAvailabilityResolver } from "./model-auth-availability.js";
 import {
   authStore,
@@ -20,6 +21,55 @@ import {
 import { prepareAgentRuntimeAuth } from "./runtime-plan/prepare-auth.js";
 
 describe("model auth unavailability reasons", () => {
+  it("names explicit provider environment auth retained beside a saved account", () => {
+    const resolver = createModelAuthAvailabilityResolver({
+      cfg: {
+        models: {
+          providers: {
+            "byteplus-plan": {
+              api: "openai-completions",
+              baseUrl: "https://plan.example.test/v1",
+              models: [],
+            },
+          },
+        },
+      },
+      authStore: authStore({
+        "byteplus-plan:saved": {
+          type: "api_key",
+          provider: "byteplus-plan",
+          key: "saved-account-A",
+        },
+      }),
+      env: { BYTEPLUS_API_KEY: "environment-account-B" },
+      metadataSnapshot: createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "byteplus",
+            providers: ["byteplus", "byteplus-plan"],
+            providerAuthAliases: { "byteplus-plan": "byteplus" },
+            setup: { providers: [{ id: "byteplus", envVars: ["BYTEPLUS_API_KEY"] }] },
+          },
+        ],
+      }),
+      preferredAuthSource: () => ({
+        kind: "direct",
+        mode: "api-key",
+        readiness: "ready",
+        evidence: "environment",
+        authorization: "ambient",
+      }),
+    });
+    const evaluation = resolver.evaluateModelAuth("byteplus-plan", { modelId: "ark-code-latest" });
+    expect(evaluation).toMatchObject({
+      availability: true,
+      evidence: "environment",
+      selectedAuthMode: "api-key",
+      environmentVariable: "BYTEPLUS_API_KEY",
+    });
+    expect(evaluation.selectedProfileId).toBeUndefined();
+  });
+
   it.each([
     {
       label: "Platform environment after unavailable OAuth",

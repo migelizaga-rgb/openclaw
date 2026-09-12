@@ -133,10 +133,37 @@ describe("resolveEnvApiKey provider auth aliases", () => {
           authEvidenceMap: {},
         },
       ),
-    ).toEqual({ mode: "api-key", source: "env: EXTERNAL_CLOUD_API_KEY" });
+    ).toEqual({
+      mode: "api-key",
+      source: "env: EXTERNAL_CLOUD_API_KEY",
+      environmentVariable: "EXTERNAL_CLOUD_API_KEY",
+    });
     expect(pluginMetadataMocks.getCurrentPluginMetadataSnapshot).not.toHaveBeenCalled();
     expect(pluginMetadataMocks.loadPluginMetadataSnapshot).not.toHaveBeenCalled();
     expect(setupRegistryMocks.resolvePluginSetupProviderCore).not.toHaveBeenCalled();
+  });
+
+  it("keeps local credential-file evidence unnamed", () => {
+    expect(
+      resolveProviderEnvAuthEvidence(
+        "google-vertex",
+        { CREDENTIAL_FILE: process.execPath },
+        {
+          aliasMap: {},
+          candidateMap: { "google-vertex": [] },
+          authEvidenceMap: {
+            "google-vertex": [
+              {
+                type: "local-file-with-env",
+                fileEnvVar: "CREDENTIAL_FILE",
+                credentialMarker: "fixture-local-credentials",
+                source: "local chain auth",
+              },
+            ],
+          },
+        },
+      ),
+    ).toStrictEqual({ mode: "api-key", source: "local chain auth" });
   });
 
   it("retains setup-provider fallback as deferred planning evidence without loading it", () => {
